@@ -1,0 +1,5 @@
+# Only local environment and caches are ignored: inputs, outputs, logs, work files,
+# renders and exports are the experiment's results and are committed on purpose.
+.venv/
+__pycache__/
+.DS_Store

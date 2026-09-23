@@ -1,0 +1,52 @@
+
+--- stderr ---
+Processing /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/work/skanna0523/skanna0523.jpg
+Starting Inference.
+Segnet Inference time: 3.1364412079856265; batch_size 8
+Creating bounds for noteheads
+Creating bounds for staff_fragments
+Creating bounds for clefs_keys
+Creating bounds for stems_rest
+Creating bounds for bar_lines
+Found 610 staff line fragments
+Found 101 noteheads
+Average note head height: 20.03103256225586
+Found 11 bar lines
+Found 24 clefs
+Found 0 possible other clefs
+Found 77 staff anchors
+Found 6 staffs
+Removed 2 duplicate staffs
+[32m[INFO] 2026-09-23 20:34:07,196 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+Found 92 notes during segmentation
+Found 4 connected staffs (after merging grand staffs, multiple voices):  [1, 1, 1, 1]
+Dewarping staff 0
+Dewarping staff 0 done
+Running TrOmr inference on staff image 0
+[32m[INFO] 2026-09-23 20:34:08,624 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-09-23 20:34:08,625 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-09-23 20:34:08,648 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-09-23 20:34:08,651 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-09-23 20:34:08,651 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-09-23 20:34:08,678 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-09-23 20:34:08,702 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
+[32m[INFO] 2026-09-23 20:34:08,702 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
+Inference Time Tromr: 0.5061164579819888
+Dewarping staff 1
+Dewarping staff 1 done
+Running TrOmr inference on staff image 1
+Inference Time Tromr: 0.5062071249994915
+Dewarping staff 2
+Dewarping staff 2 done
+Running TrOmr inference on staff image 2
+Inference Time Tromr: 0.31813624998903833
+Dewarping staff 3
+Dewarping staff 3 done
+Running TrOmr inference on staff image 3
+Inference Time Tromr: 0.2604516660212539
+Removing tuplets from measure # 8
+Removing tuplets from measure # 9
+Found title: 
+Writing XML [[clef_G2 _ _ _ _ upper, timeSignature/8 . . . . ., note_16 A3 _ _ _ upper, note_16 E4 _ _ _ upper, note_16 B4 _ _ _ upper, note_16 C5 _ _ _ upper, note_16 D5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 D6 _ _ _ upper, note_16 C6 _ _ _ upper, note_16 B5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 D5 _ _ _ upper, note_16 C5 _ _ _ upper, note_16 B4 _ _ _ upper, note_16 E4 _ _ _ upper, barline . . . . ., note_16 A3 _ _ _ upper, note_16 E4 _ _ _ upper, note_16 B4 _ _ _ upper, note_16 C5 _ _ _ upper, note_16 D5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 B5 _ _ _ upper, note_16 A5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 C6 _ _ _ upper, note_16 F5 _ _ _ upper, note_16 D6 # _ _ upper, note_16 E5 _ _ _ upper, note_16 E6 _ _ _ upper, note_16 D5 # _ _ upper, note_16 G6 _ _ _ upper, barline . . . . ., newline . . . . ., keySignature_0 . . . . ., note_16 A3 _ _ _ upper, note_16 E4 _ _ _ upper, note_16 B4 _ _ _ upper, note_16 C5 _ _ _ upper, note_16 D5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 D6 _ _ _ upper, note_16 C6 _ _ _ upper, note_16 B5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 D5 _ _ _ upper, note_16 C5 _ _ _ upper, note_16 B4 _ _ _ upper, note_16 E4 _ _ _ upper, barline . . . . ., note_16 A3 _ _ _ upper, note_16 F4 _ _ _ upper, note_16 B4 _ _ _ upper, note_16 C5 _ _ _ upper, note_16 D5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 D6 _ _ _ upper, note_16 C6 _ _ _ upper, note_16 B5 _ _ _ upper, note_16 E6 _ _ _ upper, note_16 A5 _ _ _ upper, note_16 F6 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 G6 _ _ _ upper, note_16 F5 _ _ _ upper, note_16 A6 _ _ slurStart upper, barline . . . . ., note_12 A6 _ _ slurStop upper, note_12 G6 _ _ _ upper, note_12 F6 _ _ _ upper, note_12 E6 _ _ _ upper, note_12 D6 _ _ _ upper, note_12 F6 _ _ slurStart upper, note_12 F6 _ _ slurStop upper, note_12 E6 _ _ _ upper, note_12 D6 _ _ _ upper, note_12 C6 _ _ _ upper, note_12 B5 _ _ _ upper, note_12 D6 _ _ _ upper, barline . . . . ., newline . . . . ., note_16 A3 _ _ _ upper, note_16 E4 _ _ _ upper, note_16 B4 _ _ _ upper, note_16 C5 _ _ _ upper, note_16 D5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 D6 _ _ _ upper, note_16 C6 _ _ _ upper, note_16 B5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 D5 _ _ _ upper, note_16 C5 _ _ _ upper, note_16 B4 _ _ _ upper, note_16 E4 _ _ _ upper, barline . . . . ., note_1 G6 _ _ _ upper, barline . . . . ., newline . . . . ., note_16 B5 _ _ slurStart upper, note_16 B5 _ _ _ upper, note_16 B5 _ _ _ upper, note_16 B5 _ _ _ upper, note_4 G5 _ _ slurStop upper, barline . . . . ., newline . . . . .]]
+Finished parsing 1 staves
+Result was written to /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/work/skanna0523/skanna0523.musicxml

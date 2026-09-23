@@ -1,0 +1,105 @@
+_check_choices_intelligently: intelligent choice for <musicxml.xmlelement.xmlelement.XMLNote object at 0x1150f9d30>
+
+--- stderr ---
+Processing /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/work/källvatten/källvatten.jpg
+Starting Inference.
+Segnet Inference time: 3.2590922089875676; batch_size 8
+Creating bounds for noteheads
+Creating bounds for staff_fragments
+Creating bounds for clefs_keys
+Creating bounds for stems_rest
+Creating bounds for bar_lines
+Found 1350 staff line fragments
+Found 259 noteheads
+Average note head height: 13.435029029846191
+Found 150 bar lines
+Found 7 clefs
+Found 0 possible other clefs
+Found 156 staff anchors
+Found 18 staffs
+Removed 5 duplicate staffs
+[32m[INFO] 2026-09-23 20:12:23,444 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+Found 199 notes during segmentation
+Found 7 connected staffs (after merging grand staffs, multiple voices):  [1, 1, 1, 1, 1, 1, 1]
+Dewarping staff 0
+Dewarping staff 0 done
+[32m[INFO] 2026-09-23 20:12:23,557 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-09-23 20:12:23,557 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-09-23 20:12:23,583 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+Running TrOmr inference on staff image 0
+[32m[INFO] 2026-09-23 20:12:24,852 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-09-23 20:12:24,852 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-09-23 20:12:24,874 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-09-23 20:12:24,899 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
+[32m[INFO] 2026-09-23 20:12:24,899 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
+Inference Time Tromr: 1.237257957982365
+Dewarping staff 1
+Dewarping staff 1 done
+Running TrOmr inference on staff image 1
+Inference Time Tromr: 0.4940538329828996
+Dewarping staff 2
+Dewarping staff 2 done
+Running TrOmr inference on staff image 2
+Inference Time Tromr: 0.4360699160024524
+Dewarping staff 3
+Dewarping staff 3 done
+Running TrOmr inference on staff image 3
+Inference Time Tromr: 0.4626732080068905
+Dewarping staff 4
+Dewarping staff 4 done
+Running TrOmr inference on staff image 4
+Inference Time Tromr: 0.3043528749840334
+Dewarping staff 5
+Dewarping staff 5 done
+Running TrOmr inference on staff image 5
+Inference Time Tromr: 0.4782177919987589
+Dewarping staff 6
+Dewarping staff 6 done
+Running TrOmr inference on staff image 6
+Inference Time Tromr: 0.2755567079875618
+Removing tuplets from measure # 1
+Removing tuplets from measure # 2
+Removing tuplets from measure # 3
+Removing tuplets from measure # 4
+Removing tuplets from measure # 5
+Removing tuplets from measure # 6
+Removing tuplets from measure # 14
+Removing tuplets from measure # 18
+Removing tuplets from measure # 20
+Removing tuplets from measure # 21
+Removing tuplets from measure # 22
+Removing tuplets from measure # 23
+Removing tuplets from measure # 24
+Removing tuplets from measure # 25
+Removing tuplets from measure # 26
+Removing tuplets from measure # 31
+Removing tuplets from measure # 34
+Warning, invalid symbol in group: Only notes and rests have durations
+Found title: 
+Writing XML [[clef_G2 _ _ _ _ upper, chord . . . . ., clef_F4 _ _ _ _ lower, keySignature_0 . . . . ., note_2 D6 b _ slurStart upper, chord . . . . ., note_2 B5 b _ _ upper, chord . . . . ., note_2 G5 b _ _ upper, chord . . . . ., note_2 D5 b _ _ upper, chord . . . . ., note_2 B4 b _ _ upper, chord . . . . ., note_2 G2 b _ _ lower, chord . . . . ., note_2 G1 b _ _ lower, barline . . _ _ lower, chord . . . . ., barline . b _ _ upper, barline . . _ _ upper, barline . b _ _ ., barline . b _ _ upper, barline . b _ _ upper, barline _ b _ _ upper, note_2 . b _ _ upper, note_2 _ b _ _ lower, chord . . . . ., note_16 C5 b _ _ lower, chord . . . . ., note_16 C4 b _ _ lower, barline . . . . ., note_2 _ _ _ _ upper, chord . . . . ., note_2 _ _ _ _ lower, clef_G2 _ _ _ _ lower, note_2 . b _ _ upper, chord . . . . ., note_2 _ _ _ _ lower, chord . . . . ., note_2 G2 _ _ _ lower, chord . . . . ., note_2 E2 _ _ _ lower, barline . . . . ., newline . . . . ., clef_F4 _ _ _ _ lower, note_1 C4 _ _ _ upper, chord . . . . ., note_1 B3 b _ _ upper, chord . . . . ., note_1 G3 _ _ _ lower, chord . . . . ., note_1 E3 b _ _ lower, chord . . . . ., note_1 G2 b _ _ lower, barline . . . . ., note_2. A3 b _ _ upper, chord . . . . ., note_2. B3 b _ _ upper, chord . . . . ., note_2. A3 b _ _ lower, chord . . . . ., note_2. E3 b _ _ lower, chord . . . . ., note_2. C3 b _ _ lower, chord . . . . ., note_2. A2 b _ _ lower, chord . . . . ., note_2. F2 b _ _ lower, barline . . . . ., note_2. G3 b _ _ upper, chord . . . . ., note_2. A3 b _ _ lower, chord . . . . ., note_2. E3 b _ _ lower, chord . . . . ., note_2. E2 b _ _ lower, chord . . . . ., note_2. C2 _ _ _ lower, clef_G2 . . _ _ ., chord . . . . ., note_2. E1 b _ _ lower, note_2. B3 b _ _ upper, chord . . . . ., note_2. E2 b _ _ lower, chord . . . . ., note_2. C2 _ _ _ lower, note_8. B3 b _ _ upper, note_16 A3 b _ _ upper, note_4 B3 b _ _ upper, doublebarline . . . . ., newline . . . . ., note_4. C5 # _ _ upper, note_2. C5 _ _ slurStart upper, chord . . . . ., note_16 _ _ _ _ upper, chord . . . . ., note_16 A4 _ _ _ lower, chord . . . . ., note_16 F4 _ _ _ lower, note_16 A4 _ _ _ lower, note_16 F4 _ _ _ lower, note_16 A4 _ _ _ lower, note_2. D5 _ _ _ lower, chord . . . . ., note_16 F4 _ _ _ lower, note_16 A4 _ _ _ lower, note_16 F4 _ _ _ lower, chord . . . . ., note_2 D4 _ _ _ lower, note_16 A4 _ _ _ lower, note_16 B5 _ _ _ upper, chord . . . . ., note_16 G4 _ _ _ lower, note_16 A5 _ _ _ upper, chord . . . . ., note_16 A4 _ _ _ lower, note_16 C5 _ _ _ upper, chord . . . . ., note_16 G4 _ _ _ lower, note_16 C5 _ _ _ lower, chord . . . . ., note_16 A4 _ _ _ lower, barline . . . . ., note_2. . _ _ _ upper, chord . . . . ., note_2. G4 _ _ _ lower, chord . . . . ., note_16 F4 _ _ _ lower, note_16 A4 _ _ _ lower, barline . _ _ _ ., chord . . . . ., note_16 . _ _ _ lower, barline . . . . ., newline . . . . ., clef_F4 _ _ _ _ lower, note_2. D5 _ _ slurStart upper, chord . . . . ., note_1 _ _ _ _ lower, barline . . . . ., note_2. B5 _ _ slurStop upper, chord . . . . ., note_1 _ _ _ _ lower, chord . . . . ., note_1 B3 _ _ slurStart lower, chord . . . . ., note_1 G3 _ _ _ lower, chord . . . . ., note_1 E3 _ _ _ lower, chord . . . . ., note_1 C3 _ _ _ lower, note_2. A5 _ _ slurStop upper, chord . . . . ., note_2. C3 _ _ _ lower, chord . . . . ., barline . . _ _ ., barline . . . . ., note_2. B5 _ _ _ upper, chord . . . . ., note_2. G5 _ _ _ lower, chord . . . . ., note_2. B4 _ _ _ lower, chord . . . . ., note_2. B3 _ _ _ lower, chord . . . . ., note_2. G3 _ _ _ lower, chord . . . . ., note_2. E3 _ _ _ lower, note_2. _ _ _ _ upper, chord . . . . ., note_2. E3 _ _ _ lower, chord . . . . ., note_2. G2 _ _ _ lower, barline . . . . ., newline . . . . ., note_8 F4 _ _ _ upper, barline . . . . ., note_8 B4 _ _ _ upper, note_8 D5 _ _ _ upper, note_8 C5 _ _ _ upper, note_8 . _ _ _ upper, barline . . . . ., note_8 . _ _ _ upper, barline . . _ . upper, barline . _ _ . upper, barline . _ _ _ upper, barline . _ _ _ upper, barline . _ _ _ upper, barline . _ _ . upper, barline . . . . ., newline . . . . ., note_2. F5 b _ _ upper, chord . . . . ., note_2. F4 b _ _ upper, chord . . . . ., note_1 F3 b fermata _ lower, chord . . . . ., note_1 F2 b _ _ lower, barline . . . . ., note_2. F5 b _ _ upper, chord . . . . ., note_2. F4 b _ _ upper, chord . . . . ., note_2. F3 b _ _ lower, chord . . . . ., note_2. F2 b _ _ lower, barline . . . . ., note_2. F4 b _ _ upper, chord . . . . ., note_2. C4 b _ _ lower, chord . . . . ., note_2. G3 b _ _ lower, chord . . . . ., note_2. C3 b _ _ lower, chord . . . . ., note_2. F2 b _ _ lower, barline . . . . ., note_2. F4 b _ _ upper, chord . . . . ., note_2. C4 b _ _ upper, chord . . . . ., note_2. G3 b _ _ lower, chord . . . . ., note_2. C3 b _ _ lower, chord . . . . ., note_2. C2 b _ _ lower, barline . . . _ upper, chord . . . . ., note_1 _ b _ _ lower, chord . . . . ., note_1 _ _ _ _ lower, barline . . . . ., note_2 . b _ _ upper, chord . . . . ., note_1 C4 b _ _ upper, chord . . . . ., note_1 G3 b _ _ lower, chord . . . . ., note_1 C3 b _ _ lower, chord . . . . ., note_1 C2 b _ _ lower, bolddoublebarline . . . _ ., newline . . . . ., note_1 C5 _ fermata _ upper, chord . . . . ., note_1 C4 _ _ _ upper, chord . . . . ., note_1 A2 _ fermata _ lower, chord . . . . ., note_1 A1 _ _ _ lower, doublebarline . . . . ., newline . . . . .]]
+WARNING note without pitch note_2 . b _ _ upper
+WARNING note without pitch note_2 . b _ _ upper
+Warning, invalid symbol in group: Only notes and rests have durations
+Warning, invalid symbol in group: Only notes and rests have durations
+Warning, invalid symbol in group: Only notes and rests have durations
+WARNING note without pitch clef_G2 . . _ _ .
+WARNING note without pitch note_2. . _ _ _ upper
+Warning, invalid symbol in group: Only notes and rests have durations
+Warning, invalid symbol in group: Only notes and rests have durations
+WARNING note without pitch note_16 . _ _ _ lower
+Warning, invalid symbol in group: Only notes and rests have durations
+WARNING note without pitch barline . _ _ _ .
+Warning, invalid symbol in group: Only notes and rests have durations
+Warning, invalid symbol in group: Only notes and rests have durations
+Warning, invalid symbol in group: Only notes and rests have durations
+WARNING note without pitch barline . . _ _ .
+WARNING note without pitch note_8 . _ _ _ upper
+WARNING note without pitch note_8 . _ _ _ upper
+Warning, invalid symbol in group: Only notes and rests have durations
+Warning, invalid symbol in group: Only notes and rests have durations
+Warning, invalid symbol in group: Only notes and rests have durations
+WARNING note without pitch barline . . . _ upper
+WARNING note without valid articulation .
+WARNING note without pitch note_2 . b _ _ upper
+Finished parsing 1 staves
+Result was written to /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/work/källvatten/källvatten.musicxml
