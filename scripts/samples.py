@@ -14,10 +14,9 @@ import unicodedata
 from pathlib import Path
 
 from combine import retitle
-from run_batch import IMAGE_EXTS, postprocess_options
+from run_batch import SOURCE_EXTS, postprocess_options
 
 NAME = re.compile(r"^\w[\w .-]*$")
-SOURCE_EXTS = IMAGE_EXTS | {".pdf"}
 
 
 def nfc(s: str) -> str:

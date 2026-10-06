@@ -5,15 +5,16 @@ locally on about 10 of our scores and find out how usable its MusicXML is. It is
 minimal: one script, no editor, no training, no orchestration.
 
 ```
-inputs/    score images (png/jpg; homr only reads these) or PDFs: put yours here
+inputs/    score images (png/jpg; homr only reads these) or PDFs: put yours here; also MusicXML
+           files you already have (.musicxml/.mxl), which are imported as they are, without HOMR
 outputs/   <name>.musicxml, or <name>-pNN.musicxml for each PDF page (HOMR + postprocess.py)
 logs/      HOMR output per page
 work/      page images as fed to HOMR, HOMR's own <name>.homr.musicxml and *_teaser.png (the staves it detected)
 review/    run-results.csv, environment.md, review.md (notes and findings), renders/ (MuseScore PDFs),
            truth/ (hand-checked transcriptions for score_check.py)
-exports/   scores saved from MuseScore after review
+exports/   scores saved from MuseScore after review; PDF/MIDI exports from the UI or export.py
 scores/    full scores concatenated from results in the UI (<name>.musicxml + MuseScore PDF)
-scripts/   run_batch.py, postprocess.py, score_check.py, combine.py, samples.py, ui.py
+scripts/   run_batch.py, postprocess.py, score_check.py, combine.py, samples.py, export.py, ui.py
 tests/     uv run pytest
 ```
 
@@ -42,6 +43,10 @@ keeps HOMR's file as `work/<name>/<name>.homr.musicxml` and writes a fixed copy 
 `review/environment.md` (tool versions and commands) and adds a row per new sample to
 `review/review.md`. Failures are recorded as they are, without retries.
 
+A `.musicxml` or compressed `.mxl` in `inputs/` (say a section you transcribed or fixed in
+MuseScore) skips HOMR: it is copied uncompressed to `outputs/<name>.musicxml` and rendered, and
+its row has status `imported`. It can then be concatenated with the HOMR results like any other.
+
 ### Or use the local UI
 
 ```bash
@@ -50,18 +55,22 @@ uv run python scripts/ui.py                   # then open http://127.0.0.1:8765
 
 A single page where you drop images/PDFs into `inputs/` (or remove them), run the same batch
 script, and see the results with links to each MusicXML, MuseScore render and log. It only
-listens on 127.0.0.1. In the results you can also:
+listens on 127.0.0.1. Dropped `.musicxml`/`.mxl` files are imported at once and show up in the
+results without a batch run. In the results you can also:
 
 - **Reorder** them: drag a row by ⠿, or use ↑ ↓. The order is kept in `review/full-score.json`.
 - **Concatenate** the ticked results, in that order, into a full score:
   `scores/<name>.musicxml` plus its MuseScore PDF. Measures are numbered on from 1, each result
   starts a new system, and clefs or time signatures that only repeat what is in force are left
-  out at the joins. The same from the command line:
+  out at the joins, as is a final barline before a join. The same from the command line:
   `uv run python scripts/combine.py <title> scores/<title>.musicxml outputs/a.musicxml outputs/b.musicxml`
 - **Rename** a sample or a full score by clicking its name. A sample is renamed everywhere it
   is named (input, `work/`, outputs, log, render, its rows in `run-results.csv` and `review.md`,
   its pages in `review/truth/`, its options in `inputs/postprocess.json`), so the next run keeps
   the new name. A full score's title changes with its name.
+- **Export** a result or a full score to PDF or MIDI with its PDF / MIDI buttons: MuseScore
+  writes `exports/<name>.pdf` or `.mid` and the browser downloads it. The same from the command
+  line: `uv run python scripts/export.py pdf|midi <file.musicxml> ...`
 
 ## Post-processing
 

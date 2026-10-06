@@ -1,5 +1,7 @@
 """Tiny local UI: upload scores to inputs/, run the batch, browse results, put them in order,
-rename them and concatenate them into a full score.
+rename them, concatenate them into a full score and export results or full scores to PDF or MIDI.
+
+An uploaded .musicxml/.mxl (a score you already have) becomes a result straight away, without HOMR.
 
 Usage:  uv run python scripts/ui.py [--port 8765]   then open http://127.0.0.1:8765
 """
@@ -16,15 +18,18 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from combine import concatenate, sources_of
-from run_batch import IMAGE_EXTS, INPUTS, REVIEW, ROOT, check_musescore, mscore_bin
+from export import export
+from run_batch import (INPUTS, MUSICXML_EXTS, REVIEW, ROOT, SOURCE_EXTS, append_review_rows, check_musescore,
+                       import_musicxml, mscore_bin, upsert_result)
 from samples import check_name, nfc, rename_sample, rename_score
 
-ALLOWED_EXTS = IMAGE_EXTS | {".pdf"}
+ALLOWED_EXTS = SOURCE_EXTS
 SCORES = ROOT / "scores"
 STATE = REVIEW / "full-score.json"  # order of the results, which go into the full score, its name
-SERVABLE_DIRS = ("inputs", "outputs", "logs", "review", "scores")
+SERVABLE_DIRS = ("inputs", "outputs", "logs", "review", "scores", "exports")
 CONTENT_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
                  ".jpeg": "image/jpeg", ".musicxml": "application/vnd.recordare.musicxml+xml",
+                 ".mxl": "application/vnd.recordare.musicxml", ".mid": "audio/midi",
                  ".log": "text/plain; charset=utf-8", ".csv": "text/csv; charset=utf-8",
                  ".md": "text/plain; charset=utf-8"}
 
@@ -93,7 +98,8 @@ PAGE = """<!doctype html>
   <button id="theme" type="button" role="switch" aria-checked="false"><span class="track" aria-hidden="true"><span class="thumb"></span></span>Dark mode</button>
 </header>
 <div id="drop">Drop score images (PNG/JPG) or PDFs here, or click to choose
-  <input id="file" type="file" multiple accept=".png,.jpg,.jpeg,.pdf" hidden></div>
+  <div class="muted small">MusicXML files you already have (.musicxml, .mxl) go straight to Results, without HOMR.</div>
+  <input id="file" type="file" multiple accept=".png,.jpg,.jpeg,.pdf,.musicxml,.mxl" hidden></div>
 
 <h2>Inputs</h2>
 <table id="inputs"></table>
@@ -102,7 +108,8 @@ PAGE = """<!doctype html>
 
 <h2>Results</h2>
 <p class="muted small">Drag a row by ⠿ (or use ↑ ↓) to set the order, untick what to leave out of the full score,
-  click a name to rename the sample (its input, outputs, logs and review rows are renamed with it).</p>
+  click a name to rename the sample (its input, outputs, logs and review rows are renamed with it).
+  PDF / MIDI exports the result to exports/ and downloads it.</p>
 <table id="results"></table>
 <p id="rstatus" class="small" role="status"></p>
 <div class="combine">
@@ -122,6 +129,8 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const link = (p, label) => p ? `<a href="/files/${encodeURI(p)}" target="_blank">${label}</a>` : '';
 const post = (url, body) => fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+const exportButtons = (attr, i, name) => ['pdf', 'midi'].map(f =>
+  `<button data-${attr}="${i}" data-fmt="${f}" aria-label="Export ${esc(name)} to ${f.toUpperCase()}">${f === 'pdf' ? 'PDF' : 'MIDI'}</button>`).join(' ');
 let state = {inputs: [], results: [], full: {name: ''}, scores: []};
 
 async function refresh() {
@@ -145,24 +154,26 @@ function render() {
     : '<tr><td class="muted">No inputs yet.</td></tr>';
   const rs = state.results;
   $('#results').innerHTML = rs.length
-    ? '<tr><th></th><th>in full score</th><th>sample</th><th>status</th><th>seconds</th><th>MuseScore</th><th>files</th><th>order</th></tr>' +
+    ? '<tr><th></th><th>in full score</th><th>sample</th><th>status</th><th>seconds</th><th>MuseScore</th><th>files</th><th>export</th><th>order</th></tr>' +
       rs.map((r, i) => `<tr draggable="true" data-i="${i}">
         <td class="handle" title="Drag to reorder">⠿</td>
         <td><input type="checkbox" data-inc="${i}" ${r.include ? 'checked' : ''} ${r.output ? '' : 'disabled'}
              aria-label="Include ${esc(r.output_name)} in the full score"></td>
         <td><span class="name" tabindex="0" role="button" data-ren="${i}" title="Click to rename">${esc(r.stem)}</span>${esc(r.output_name.slice(r.stem.length))}</td>
-        <td class="${r.status === 'ok' ? 'ok' : 'bad'}" title="${esc(r.fixes ? 'fixes: ' + r.fixes : '')}">${esc(r.status)}</td>
+        <td class="${['ok', 'imported'].includes(r.status) ? 'ok' : 'bad'}" title="${esc(r.fixes ? 'fixes: ' + r.fixes : '')}">${esc(r.status)}</td>
         <td>${esc(r.seconds)}</td><td>${esc(r.musescore)}</td>
         <td class="nowrap">${link(r.output, 'musicxml')} ${link(r.render, 'render')} ${link(r.log, 'log')}</td>
+        <td class="nowrap">${r.output ? exportButtons('exp', i, r.output_name) : ''}</td>
         <td class="nowrap"><button data-up="${i}" ${i ? '' : 'disabled'} aria-label="Move ${esc(r.output_name)} up">↑</button>
           <button data-down="${i}" ${i < rs.length - 1 ? '' : 'disabled'} aria-label="Move ${esc(r.output_name)} down">↓</button></td></tr>`).join('')
     : '<tr><td class="muted">No run yet.</td></tr>';
   if (document.activeElement !== $('#fullname')) $('#fullname').value = state.full.name || defaultName();
   $('#scores').innerHTML = state.scores.length
-    ? '<tr><th>full score</th><th>made from</th><th>files</th></tr>' + state.scores.map((s, i) => `<tr>
+    ? '<tr><th>full score</th><th>made from</th><th>files</th><th>export</th></tr>' + state.scores.map((s, i) => `<tr>
         <td><span class="name" tabindex="0" role="button" data-score="${i}" title="Click to rename">${esc(s.name)}</span></td>
         <td class="muted small">${esc(s.sources.map(x => x.replace(/\\.musicxml$/, '')).join(' → '))}</td>
-        <td class="nowrap">${link(s.xml, 'musicxml')} ${link(s.pdf, 'render')}</td></tr>`).join('')
+        <td class="nowrap">${link(s.xml, 'musicxml')} ${link(s.pdf, 'render')}</td>
+        <td class="nowrap">${exportButtons('sexp', i, s.name)}</td></tr>`).join('')
     : '<tr><td class="muted">None yet.</td></tr>';
 }
 
@@ -218,9 +229,31 @@ function editName(span, current, url, statusEl) {
   input.addEventListener('blur', () => finish(true));
 }
 
+// Export with MuseScore, then download the file it wrote to exports/.
+async function exportFile(kind, name, fmt, button, statusEl) {
+  button.disabled = true;
+  statusEl.textContent = `Exporting ${name} to ${fmt.toUpperCase()} with MuseScore…`;
+  const res = await post('/api/export', {kind, name, format: fmt});
+  const text = await res.text();
+  if (res.ok) {
+    const {file} = JSON.parse(text);
+    const a = document.createElement('a');
+    a.href = '/files/' + encodeURI(file);
+    a.download = file.split('/').pop();
+    document.body.append(a);
+    a.click();
+    a.remove();
+    statusEl.innerHTML = `Exported ${link(file, esc(file))}.`;
+  } else {
+    statusEl.innerHTML = `<span class="error">${esc(text)}</span>`;
+  }
+  button.disabled = false;
+}
+
 const results = $('#results');
 results.addEventListener('click', e => {
   const t = e.target;
+  if (t.dataset.exp !== undefined) exportFile('result', state.results[+t.dataset.exp].output_name, t.dataset.fmt, t, $('#rstatus'));
   if (t.dataset.up !== undefined) move(+t.dataset.up, +t.dataset.up - 1, 'up');
   if (t.dataset.down !== undefined) move(+t.dataset.down, +t.dataset.down + 1, 'down');
   if (t.dataset.ren !== undefined) editName(t, state.results[+t.dataset.ren].stem, '/api/rename', $('#rstatus'));
@@ -298,6 +331,7 @@ $('#combine').onclick = async () => {
 
 const scores = $('#scores');
 scores.addEventListener('click', e => {
+  if (e.target.dataset.sexp !== undefined) exportFile('score', state.scores[+e.target.dataset.sexp].name, e.target.dataset.fmt, e.target, $('#sstatus'));
   if (e.target.dataset.score !== undefined) editName(e.target, state.scores[+e.target.dataset.score].name, '/api/rename-score', $('#sstatus'));
 });
 scores.addEventListener('keydown', e => {
@@ -420,6 +454,43 @@ def combine(name: str, samples: list[str]) -> dict:
             "pdf": str(pdf.relative_to(ROOT)) if pdf.exists() and musescore == "yes" else ""}
 
 
+def import_upload(name: str, data: bytes) -> dict:
+    """Save an uploaded .musicxml/.mxl to inputs/ and make it a result right away."""
+    stem = nfc(Path(name).stem)
+    try:
+        check_name(stem)
+    except ValueError as e:
+        raise ValueError(f"{name}: {e}") from None
+    taken = next((p for p in INPUTS.iterdir()
+                  if nfc(p.stem) == stem and p.suffix.lower() in ALLOWED_EXTS and nfc(p.name) != nfc(name)), None)
+    if taken:
+        raise ValueError(f"{taken.name} is already in inputs/ under the name {stem}; rename one of them first")
+    src = INPUTS / name
+    src.write_bytes(data)
+    try:
+        row = import_musicxml(src, mscore_bin())
+    except ValueError:
+        src.unlink()
+        raise
+    upsert_result(row)
+    append_review_rows([row])
+    return row
+
+
+def export_file(kind: str, name: str, fmt: str) -> dict:
+    """Export a result ("result") or a full score ("score") to exports/<name>.pdf|.mid."""
+    if kind == "result":
+        output = next((r["output"] for r in read_results() if r["output_name"] == nfc(name)), "")
+        xml = ROOT / output if output else None
+    elif kind == "score":
+        xml = next((p for p in SCORES.glob("*.musicxml") if nfc(p.stem) == nfc(name)), None)
+    else:
+        raise ValueError(f"unknown kind {kind!r}")
+    if xml is None:
+        raise ValueError(f"no MusicXML for {name}")
+    return {"file": str(export(xml, fmt).relative_to(ROOT))}
+
+
 class Handler(BaseHTTPRequestHandler):
     def send(self, code: int, body: bytes | str, ctype: str = "text/plain; charset=utf-8") -> None:
         data = body.encode() if isinstance(body, str) else body
@@ -461,7 +532,13 @@ class Handler(BaseHTTPRequestHandler):
             name = self.input_name()
             if not name:
                 return self.send(400, f"only {', '.join(sorted(ALLOWED_EXTS))} files are accepted")
-            (INPUTS / name).write_bytes(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+            data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if Path(name).suffix.lower() in MUSICXML_EXTS:
+                try:
+                    return self.send_json(import_upload(name, data))
+                except (ValueError, OSError) as e:
+                    return self.send(400, str(e))
+            (INPUTS / name).write_bytes(data)
             return self.send(200, "ok")
         if path == "/api/run":
             p = subprocess.run([sys.executable, str(ROOT / "scripts" / "run_batch.py")],
@@ -485,6 +562,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(combine(body.get("name", ""), body.get("samples", [])))
             if path == "/api/rename-score":
                 return self.send_json({"name": rename_score(SCORES, body["old"], body["new"])})
+            if path == "/api/export":
+                return self.send_json(export_file(body["kind"], body["name"], body["format"]))
         except (ValueError, KeyError, OSError, ET.ParseError) as e:
             return self.send(400, str(e) if not isinstance(e, KeyError) else f"missing {e}")
         self.send(404, "not found")
