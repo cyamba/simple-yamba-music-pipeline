@@ -20,6 +20,7 @@ Compare each file in `outputs/` (opened in MuseScore Studio) with its source in 
 | merkurius-m22-33 | ok | yes | rhythm 19/23; m22 misread on both staves (10 sixteenths + 2 eighths for 8 + 1, around the flats between chords), so its time signature comes out 7/8 instead of 5/8; m23 rhythms wrong on both staves; pitches not checked | medium | photo from further away (notehead ~12 px); same m22 misread on 16 px crops, so not a resolution problem |
 | merkurius-m34-45 | ok | yes | time signatures 12/12, rhythm 20/23; m34 LH: 19 of 20 sixteenths; m36: LH sixteenths read into the RH; pitches not checked | medium | |
 | merkurius-m46-51 | ok | yes | time signatures 6/6, rhythm 11/12; m47 RH: 19 of 20 sixteenths; pitches not checked | low | |
+| merkurius-m11-21 | imported | yes |  |  |  |
 
 ## Merkurius: HOMR + postprocess (iteration 2)
 
