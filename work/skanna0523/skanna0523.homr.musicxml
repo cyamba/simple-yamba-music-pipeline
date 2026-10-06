@@ -1,4 +1,4 @@
-<?xml version='1.0' encoding='UTF-8'?>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <score-partwise version="4.0">
   <work>
     <work-title />
@@ -28,12 +28,12 @@
     <measure number="1">
       <attributes>
         <divisions>12</divisions>
+      </attributes>
+      <attributes>
         <time>
           <beats>7</beats>
           <beat-type>8</beat-type>
         </time>
-      </attributes>
-      <attributes>
         <clef number="1">
           <sign>G</sign>
           <line>2</line>
@@ -195,12 +195,6 @@
       </note>
     </measure>
     <measure number="2">
-      <attributes>
-        <time>
-          <beats>8</beats>
-          <beat-type>8</beat-type>
-        </time>
-      </attributes>
       <note>
         <pitch>
           <step>A</step>
@@ -386,10 +380,6 @@
         <key>
           <fifths>0</fifths>
         </key>
-        <time>
-          <beats>7</beats>
-          <beat-type>8</beat-type>
-        </time>
       </attributes>
       <note>
         <pitch>
@@ -547,12 +537,6 @@
       </note>
     </measure>
     <measure number="4">
-      <attributes>
-        <time>
-          <beats>8</beats>
-          <beat-type>8</beat-type>
-        </time>
-      </attributes>
       <note>
         <pitch>
           <step>A</step>
@@ -935,12 +919,6 @@
     </measure>
     <measure number="6">
       <print new-system="yes" />
-      <attributes>
-        <time>
-          <beats>7</beats>
-          <beat-type>8</beat-type>
-        </time>
-      </attributes>
       <note>
         <pitch>
           <step>A</step>
@@ -1097,12 +1075,6 @@
       </note>
     </measure>
     <measure number="7">
-      <attributes>
-        <time>
-          <beats>8</beats>
-          <beat-type>8</beat-type>
-        </time>
-      </attributes>
       <note>
         <pitch>
           <step>G</step>
@@ -1117,12 +1089,6 @@
     </measure>
     <measure number="8">
       <print new-system="yes" />
-      <attributes>
-        <time>
-          <beats>4</beats>
-          <beat-type>8</beat-type>
-        </time>
-      </attributes>
       <note>
         <pitch>
           <step>B</step>

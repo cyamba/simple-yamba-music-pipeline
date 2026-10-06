@@ -1,2 +1,6 @@
-source,output_name,status,seconds,output,musescore,log
-skanna0523.jpg,skanna0523,ok,7.9,outputs/skanna0523.musicxml,yes,logs/skanna0523.log
+source,output_name,status,seconds,output,musescore,log,fixes
+merkurius-m01-10.jpg,merkurius-m01-10,ok,11.7,outputs/merkurius-m01-10.musicxml,yes,logs/merkurius-m01-10.log,"8 time signatures; re-timed 6/1; padded 4/1, 4/2, 6/1, 6/2, 7/1; treble 8va"
+merkurius-m22-33.jpg,merkurius-m22-33,ok,10.0,outputs/merkurius-m22-33.musicxml,yes,logs/merkurius-m22-33.log,11 time signatures; treble 8va
+merkurius-m34-45.jpg,merkurius-m34-45,ok,9.5,outputs/merkurius-m34-45.musicxml,yes,logs/merkurius-m34-45.log,10 time signatures; re-timed 1/1; padded 1/2; treble 8va
+merkurius-m46-51.jpg,merkurius-m46-51,ok,6.1,outputs/merkurius-m46-51.musicxml,yes,logs/merkurius-m46-51.log,"3 time signatures; re-timed 2/2; padded 1/2, 2/1; treble 8va"
+skanna0523.jpg,skanna0523,ok,6.2,outputs/skanna0523.musicxml,yes,logs/skanna0523.log,7 time signatures

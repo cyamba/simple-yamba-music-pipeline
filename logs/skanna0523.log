@@ -2,7 +2,7 @@
 --- stderr ---
 Processing /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/work/skanna0523/skanna0523.jpg
 Starting Inference.
-Segnet Inference time: 3.1364412079856265; batch_size 8
+Segnet Inference time: 2.0641880410257727; batch_size 8
 Creating bounds for noteheads
 Creating bounds for staff_fragments
 Creating bounds for clefs_keys
@@ -17,33 +17,33 @@ Found 0 possible other clefs
 Found 77 staff anchors
 Found 6 staffs
 Removed 2 duplicate staffs
-[32m[INFO] 2026-09-23 20:34:07,196 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-10-05 18:05:37,654 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
 Found 92 notes during segmentation
 Found 4 connected staffs (after merging grand staffs, multiple voices):  [1, 1, 1, 1]
 Dewarping staff 0
 Dewarping staff 0 done
+[32m[INFO] 2026-10-05 18:05:37,692 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-10-05 18:05:37,693 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-10-05 18:05:37,721 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-10-05 18:05:37,723 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-10-05 18:05:37,723 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-10-05 18:05:37,747 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
 Running TrOmr inference on staff image 0
-[32m[INFO] 2026-09-23 20:34:08,624 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
-[32m[INFO] 2026-09-23 20:34:08,625 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
-[32m[INFO] 2026-09-23 20:34:08,648 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
-[32m[INFO] 2026-09-23 20:34:08,651 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
-[32m[INFO] 2026-09-23 20:34:08,651 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
-[32m[INFO] 2026-09-23 20:34:08,678 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
-[32m[INFO] 2026-09-23 20:34:08,702 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
-[32m[INFO] 2026-09-23 20:34:08,702 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
-Inference Time Tromr: 0.5061164579819888
+[32m[INFO] 2026-10-05 18:05:37,938 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
+[32m[INFO] 2026-10-05 18:05:37,938 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
+Inference Time Tromr: 0.7885936250095256
 Dewarping staff 1
 Dewarping staff 1 done
 Running TrOmr inference on staff image 1
-Inference Time Tromr: 0.5062071249994915
+Inference Time Tromr: 0.6074241659953259
 Dewarping staff 2
 Dewarping staff 2 done
 Running TrOmr inference on staff image 2
-Inference Time Tromr: 0.31813624998903833
+Inference Time Tromr: 0.48739545798162
 Dewarping staff 3
 Dewarping staff 3 done
 Running TrOmr inference on staff image 3
-Inference Time Tromr: 0.2604516660212539
+Inference Time Tromr: 0.34602733299834654
 Removing tuplets from measure # 8
 Removing tuplets from measure # 9
 Found title: 

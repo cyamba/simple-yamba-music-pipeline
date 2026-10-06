@@ -1,0 +1,44 @@
+
+--- stderr ---
+Processing /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/work/merkurius-m46-51/merkurius-m46-51.jpg
+Starting Inference.
+Segnet Inference time: 2.6560291670029983; batch_size 8
+Creating bounds for noteheads
+Creating bounds for staff_fragments
+Creating bounds for clefs_keys
+Creating bounds for stems_rest
+Creating bounds for bar_lines
+Found 517 staff line fragments
+Found 85 noteheads
+Average note head height: 13.0
+Found 11 bar lines
+Found 25 clefs
+Found 0 possible other clefs
+Found 61 staff anchors
+Found 7 staffs
+Removed 1 duplicate staffs
+[32m[INFO] 2026-10-05 18:05:30,927 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+Found 90 notes during segmentation
+Found 2 connected staffs (after merging grand staffs, multiple voices):  [1, 1]
+Dewarping staff 0
+Dewarping staff 0 done
+[32m[INFO] 2026-10-05 18:05:30,968 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-10-05 18:05:30,968 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-10-05 18:05:30,999 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+Running TrOmr inference on staff image 0
+[32m[INFO] 2026-10-05 18:05:31,167 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-10-05 18:05:31,167 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-10-05 18:05:31,193 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-10-05 18:05:31,208 [RapidOCR] download_file.py:60: File exists and is valid: /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
+[32m[INFO] 2026-10-05 18:05:31,208 [RapidOCR] main.py:63: Using /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/.venv/lib/python3.12/site-packages/rapidocr/models/PP-OCRv6_rec_small.onnx[0m
+Inference Time Tromr: 1.108963250007946
+Dewarping staff 1
+Dewarping staff 1 done
+Running TrOmr inference on staff image 1
+Inference Time Tromr: 0.6868637079896871
+Removing tuplets from measure # 1
+Removing tuplets from measure # 7
+Found title: 
+Writing XML [[clef_G2 _ _ _ _ upper, chord . . . . ., clef_G2 _ _ _ _ lower, keySignature_0 . . . . ., timeSignature/8 . . . . ., note_16 A5 # _ _ upper, chord . . . . ., note_16 F5 # _ _ upper, note_16 F5 # _ _ upper, note_16 D5 _ _ _ upper, note_16 G5 # _ _ upper, note_16 C5 _ _ _ upper, note_16 E5 _ _ _ upper, note_16 F5 # _ _ upper, note_16 D5 _ _ _ upper, note_16 D5 _ _ _ upper, note_16 G5 # _ _ upper, barline . . . . ., timeSignature/4 . . . . ., note_16 C5 # _ _ upper, chord . . . . ., rest_2 _ _ _ _ lower, note_16 F5 # _ _ upper, note_16 D5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 C5 # _ _ upper, note_16 E5 _ _ _ upper, note_16 F5 # _ _ upper, chord . . . . ., rest_4 _ _ _ _ lower, note_16 D5 _ _ _ upper, note_16 G5 _ _ _ upper, note_16 C5 # _ _ upper, note_16 C5 # _ _ upper, chord . . . . ., rest_4 _ _ _ _ lower, note_16 E5 _ _ _ upper, note_16 F5 # _ _ upper, note_16 D5 _ _ _ upper, note_16 G5 _ _ _ upper, chord . . . . ., rest_8 _ _ _ _ lower, note_16 C5 # _ _ upper, note_16 E5 _ _ _ upper, chord . . . . ., note_8 G5 # _ _ lower, chord . . . . ., note_8 C5 # _ _ lower, chord . . . . ., note_8 F4 # _ _ lower, note_16 E5 _ _ _ upper, barline . . . . ., note_8 D5 _ _ _ upper, chord . . . . ., note_8 F4 _ _ _ lower, note_8 C6 _ _ _ upper, chord . . . . ., note_8 D4 # _ _ lower, note_8 A4 _ _ _ upper, chord . . . . ., note_8 C4 # _ _ lower, note_8 G5 _ _ _ upper, chord . . . . ., note_8 B4 _ _ _ lower, note_8 F6 _ _ _ upper, chord . . . . ., note_8 A4 _ _ _ lower, note_8 D5 _ _ _ upper, chord . . . . ., note_8 G4 _ _ _ lower, note_8 C6 _ _ _ upper, chord . . . . ., note_8 F4 _ _ _ lower, note_8 A6 _ _ _ upper, chord . . . . ., note_8 E4 b _ _ lower, barline . . . . ., newline . . . . ., note_8 C6 # _ _ upper, chord . . . . ., note_8 D4 b _ _ lower, note_8 D5 _ _ _ upper, chord . . . . ., note_8 F4 _ _ _ lower, note_8 C6 # _ _ upper, chord . . . . ., note_8 E4 _ _ _ lower, note_8 A6 _ _ _ upper, chord . . . . ., note_8 E4 b _ _ lower, note_8 C6 # _ _ upper, chord . . . . ., note_8 F4 # _ _ lower, note_8 D5 _ _ _ upper, chord . . . . ., note_8 F4 _ _ _ lower, note_8 C6 # _ _ upper, chord . . . . ., note_8 E4 _ _ _ lower, note_8 A6 _ _ _ upper, chord . . . . ., note_8 E4 b _ _ lower, barline . . . . ., note_8 D5 # _ _ upper, chord . . . . ., note_8 F4 # _ _ lower, note_8 C6 # _ _ upper, chord . . . . ., note_8 F4 _ _ _ lower, note_8 A6 _ _ _ upper, chord . . . . ., note_8 E4 _ _ _ lower, note_8 B5 _ _ _ upper, chord . . . . ., note_8 E4 b _ _ lower, note_8 D5 _ _ _ upper, chord . . . . ., note_8 F4 # _ _ lower, note_8 C6 # _ _ upper, chord . . . . ., note_8 F4 _ _ _ lower, note_8 A6 _ _ _ upper, chord . . . . ., note_8 E4 b _ _ lower, note_8 A6 _ _ _ upper, chord . . . . ., note_8 E4 b _ _ lower, barline . . . . ., note_1 F6 _ _ _ upper, chord . . . . ., note_1 A5 _ _ _ upper, chord . . . . ., note_1 F5 # _ _ upper, chord . . . . ., note_1 C5 # _ _ upper, chord . . . . ., note_1 B4 b _ _ upper, chord . . . . ., note_1 G4 # _ _ lower, chord . . . . ., note_1 E4 _ _ _ lower, chord . . . . ., note_1 C4 _ _ _ lower, bolddoublebarline . . . . ., newline . . . . .]]
+Finished parsing 1 staves
+Result was written to /Users/christopheryamba/YambaCode/YambaMusic/simple-yamba-music-pipeline/work/merkurius-m46-51/merkurius-m46-51.musicxml

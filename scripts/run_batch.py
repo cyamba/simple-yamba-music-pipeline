@@ -3,10 +3,14 @@
 Usage:  uv run python scripts/run_batch.py [--timeout SECONDS]
 
 inputs/<name>.(png|jpg|jpeg|pdf)
-  -> outputs/<name>.musicxml            (images)
+  -> work/<name>/<output-name>.homr.musicxml  (HOMR's own output, kept for comparison)
+  -> outputs/<name>.musicxml            (images; HOMR's output fixed by postprocess.py)
   -> outputs/<name>-pNN.musicxml        (one per PDF page)
   -> logs/<output-name>.log             (homr stdout/stderr)
   -> review/run-results.csv, review/environment.md, new rows in review/review.md
+
+Per-input options for postprocess.py go in inputs/postprocess.json, keyed by a glob on the
+output name, e.g. {"merkurius-*": {"treble_8va": 1}}.
 
 Failures are recorded, never retried or hidden.
 """
@@ -15,6 +19,8 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import fnmatch
+import json
 import platform
 import re
 import shutil
@@ -24,6 +30,8 @@ import time
 import unicodedata
 from importlib.metadata import version
 from pathlib import Path
+
+import postprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 INPUTS, OUTPUTS, LOGS, WORK, REVIEW = (ROOT / d for d in ("inputs", "outputs", "logs", "work", "review"))
@@ -73,7 +81,7 @@ def prepare_pages(src: Path) -> list[tuple[str, Path]]:
     return [(src.stem, dst)]
 
 
-def run_homr(name: str, image: Path, timeout: int) -> tuple[str, float, str]:
+def run_homr(name: str, image: Path, timeout: int) -> tuple[str, float, Path | None]:
     log = LOGS / f"{name}.log"
     start = time.monotonic()
     try:
@@ -87,16 +95,33 @@ def run_homr(name: str, image: Path, timeout: int) -> tuple[str, float, str]:
 
     produced = image.with_suffix(".musicxml")
     if not produced.exists():
-        return (status if status != "ok" else "no-output"), seconds, ""
+        return (status if status != "ok" else "no-output"), seconds, None
+    raw = image.parent / f"{name}.homr.musicxml"
+    shutil.move(produced, raw)
+    return status, seconds, raw
+
+
+def postprocess_options(name: str, rules: Path = INPUTS / "postprocess.json") -> dict:
+    if not rules.exists():
+        return {}
+    return next((opts for pattern, opts in json.loads(rules.read_text()).items()
+                 if fnmatch.fnmatch(name, pattern)), {})
+
+
+def fix_output(name: str, raw: Path) -> tuple[str, str]:
+    """HOMR's MusicXML -> outputs/<name>.musicxml, fixed by postprocess.py. Returns (path, fixes)."""
     out = OUTPUTS / f"{name}.musicxml"
-    shutil.move(produced, out)
-    return status, seconds, str(out.relative_to(ROOT))
+    try:
+        fixes = str(postprocess.fix_file(raw, out, postprocess_options(name).get("treble_8va")))
+    except Exception as e:  # noqa: BLE001 - keep HOMR's file rather than lose the page
+        shutil.copy2(raw, out)
+        fixes = f"postprocess failed ({e.__class__.__name__}: {e}); HOMR output as is"
+    return str(out.relative_to(ROOT)), fixes
 
 
-def check_musescore(mscore: str | None, xml: str, name: str) -> str:
+def check_musescore(mscore: str | None, xml: str, name: str, renders: Path = REVIEW / "renders") -> str:
     if not mscore or not xml:
         return "skipped"
-    renders = REVIEW / "renders"
     renders.mkdir(exist_ok=True)
     started = time.time() - 1
     try:
@@ -142,6 +167,7 @@ def write_environment(mscore: str | None, timeout: int) -> None:
         f"uv run python scripts/run_batch.py --timeout {timeout}",
         "# per page, the script runs:  pdftoppm -r 300 -png <pdf> work/<name>/p   (PDFs only)",
         "#                             homr <page image>",
+        "#                             postprocess.py fixes -> outputs/<name>.musicxml",
         "```",
         "",
     ]
@@ -186,15 +212,16 @@ def main() -> None:
             pages = prepare_pages(src)
         except Exception as e:  # noqa: BLE001 - record and move on
             rows.append(dict(source=src.name, output_name=src.stem, status=f"prep failed ({e})",
-                             seconds=0, output="", musescore="skipped", log=""))
+                             seconds=0, output="", musescore="skipped", log="", fixes=""))
             continue
         for name, image in pages:
             print(f"[homr] {name} ...", flush=True)
-            status, seconds, xml = run_homr(name, image, args.timeout)
+            status, seconds, raw = run_homr(name, image, args.timeout)
+            xml, fixes = fix_output(name, raw) if raw else ("", "")
             ms = check_musescore(mscore, xml, name)
-            print(f"        {status} in {seconds}s  musescore={ms}", flush=True)
+            print(f"        {status} in {seconds}s  musescore={ms}  fixes: {fixes or '-'}", flush=True)
             rows.append(dict(source=src.name, output_name=name, status=status, seconds=seconds,
-                             output=xml, musescore=ms, log=f"logs/{name}.log"))
+                             output=xml, musescore=ms, log=f"logs/{name}.log", fixes=fixes))
 
     with (REVIEW / "run-results.csv").open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
