@@ -70,7 +70,7 @@ def rename_sample(root: Path, old: str, new: str) -> dict[str, str]:
 
     moves = [(source, inputs / f"{new}{source.suffix}")]
     for old_name, new_name in names.items():
-        for folder, suffix in (("outputs", ".musicxml"), ("logs", ".log"), ("review/renders", ".pdf")):
+        for folder, suffix in (("outputs", ".musicxml"), ("logs", ".log"), ("review/renders", ".pdf"), ("edits", ".mscz")):
             if (path := root / folder / f"{old_name}{suffix}").exists():
                 moves.append((path, root / folder / f"{new_name}{suffix}"))
     work = root / "work" / source.stem
@@ -139,8 +139,9 @@ def rename_score(scores: Path, old: str, new: str) -> str:
     old = xml.stem
     if new != nfc(old):
         moves = [(xml, scores / f"{new}.musicxml")]
-        if (pdf := scores / f"{old}.pdf").exists():
-            moves.append((pdf, scores / f"{new}.pdf"))
+        for suffix in (".pdf", ".mscz"):
+            if (path := scores / f"{old}{suffix}").exists():
+                moves.append((path, scores / f"{new}{suffix}"))
         move_all(moves)
     retitle(scores / f"{new}.musicxml", new)
     return new

@@ -2,6 +2,7 @@
 rename them, concatenate them into a full score and export results or full scores to PDF or MIDI.
 
 An uploaded .musicxml/.mxl (a score you already have) becomes a result straight away, without HOMR.
+Edit opens a result or full score in MuseScore Studio; what you save there comes back (see edits.py).
 
 Usage:  uv run python scripts/ui.py [--port 8765]   then open http://127.0.0.1:8765
 """
@@ -18,13 +19,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from combine import concatenate, sources_of
+from edits import SCORES, open_in_musescore, sync
 from export import export
 from run_batch import (INPUTS, MUSICXML_EXTS, REVIEW, ROOT, SOURCE_EXTS, append_review_rows, check_musescore,
                        import_musicxml, mscore_bin, upsert_result)
 from samples import check_name, nfc, rename_sample, rename_score
 
 ALLOWED_EXTS = SOURCE_EXTS
-SCORES = ROOT / "scores"
 STATE = REVIEW / "full-score.json"  # order of the results, which go into the full score, its name
 SERVABLE_DIRS = ("inputs", "outputs", "logs", "review", "scores", "exports")
 CONTENT_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
@@ -109,7 +110,10 @@ PAGE = """<!doctype html>
 <h2>Results</h2>
 <p class="muted small">Drag a row by ⠿ (or use ↑ ↓) to set the order, untick what to leave out of the full score,
   click a name to rename the sample (its input, outputs, logs and review rows are renamed with it).
-  PDF / MIDI exports the result to exports/ and downloads it.</p>
+  PDF / MIDI exports the result to exports/ and downloads it.
+  Edit opens it in MuseScore Studio: save there with ⌘S (not Export) and come back here: the edits
+  are loaded when this page gets focus, and concatenation uses them.
+  <button id="sync" type="button">Reload edits from MuseScore</button></p>
 <table id="results"></table>
 <p id="rstatus" class="small" role="status"></p>
 <div class="combine">
@@ -129,8 +133,9 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const link = (p, label) => p ? `<a href="/files/${encodeURI(p)}" target="_blank">${label}</a>` : '';
 const post = (url, body) => fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-const exportButtons = (attr, i, name) => ['pdf', 'midi'].map(f =>
-  `<button data-${attr}="${i}" data-fmt="${f}" aria-label="Export ${esc(name)} to ${f.toUpperCase()}">${f === 'pdf' ? 'PDF' : 'MIDI'}</button>`).join(' ');
+const ACTIONS = {edit: ['Edit', 'Open {} in MuseScore Studio'], pdf: ['PDF', 'Export {} to PDF'], midi: ['MIDI', 'Export {} to MIDI']};
+const actionButtons = name => Object.entries(ACTIONS).map(([act, [label, aria]]) =>
+  `<button data-act="${act}" aria-label="${esc(aria.replace('{}', name))}">${label}</button>`).join(' ');
 let state = {inputs: [], results: [], full: {name: ''}, scores: []};
 
 async function refresh() {
@@ -154,26 +159,27 @@ function render() {
     : '<tr><td class="muted">No inputs yet.</td></tr>';
   const rs = state.results;
   $('#results').innerHTML = rs.length
-    ? '<tr><th></th><th>in full score</th><th>sample</th><th>status</th><th>seconds</th><th>MuseScore</th><th>files</th><th>export</th><th>order</th></tr>' +
+    ? '<tr><th></th><th>in full score</th><th>sample</th><th>status</th><th>seconds</th><th>MuseScore</th><th>files</th><th>edit / export</th><th>order</th></tr>' +
       rs.map((r, i) => `<tr draggable="true" data-i="${i}">
         <td class="handle" title="Drag to reorder">⠿</td>
         <td><input type="checkbox" data-inc="${i}" ${r.include ? 'checked' : ''} ${r.output ? '' : 'disabled'}
              aria-label="Include ${esc(r.output_name)} in the full score"></td>
         <td><span class="name" tabindex="0" role="button" data-ren="${i}" title="Click to rename">${esc(r.stem)}</span>${esc(r.output_name.slice(r.stem.length))}</td>
-        <td class="${['ok', 'imported'].includes(r.status) ? 'ok' : 'bad'}" title="${esc(r.fixes ? 'fixes: ' + r.fixes : '')}">${esc(r.status)}</td>
+        <td class="${['ok', 'imported', 'edited'].includes(r.status) ? 'ok' : 'bad'}"
+            title="${esc(r.status === 'edited' ? `edited in MuseScore: edits/${r.output_name}.mscz` : r.fixes ? 'fixes: ' + r.fixes : '')}">${esc(r.status)}</td>
         <td>${esc(r.seconds)}</td><td>${esc(r.musescore)}</td>
         <td class="nowrap">${link(r.output, 'musicxml')} ${link(r.render, 'render')} ${link(r.log, 'log')}</td>
-        <td class="nowrap">${r.output ? exportButtons('exp', i, r.output_name) : ''}</td>
+        <td class="nowrap">${r.output ? actionButtons(r.output_name) : ''}</td>
         <td class="nowrap"><button data-up="${i}" ${i ? '' : 'disabled'} aria-label="Move ${esc(r.output_name)} up">↑</button>
           <button data-down="${i}" ${i < rs.length - 1 ? '' : 'disabled'} aria-label="Move ${esc(r.output_name)} down">↓</button></td></tr>`).join('')
     : '<tr><td class="muted">No run yet.</td></tr>';
   if (document.activeElement !== $('#fullname')) $('#fullname').value = state.full.name || defaultName();
   $('#scores').innerHTML = state.scores.length
-    ? '<tr><th>full score</th><th>made from</th><th>files</th><th>export</th></tr>' + state.scores.map((s, i) => `<tr>
+    ? '<tr><th>full score</th><th>made from</th><th>files</th><th>edit / export</th></tr>' + state.scores.map((s, i) => `<tr data-s="${i}">
         <td><span class="name" tabindex="0" role="button" data-score="${i}" title="Click to rename">${esc(s.name)}</span></td>
         <td class="muted small">${esc(s.sources.map(x => x.replace(/\\.musicxml$/, '')).join(' → '))}</td>
         <td class="nowrap">${link(s.xml, 'musicxml')} ${link(s.pdf, 'render')}</td>
-        <td class="nowrap">${exportButtons('sexp', i, s.name)}</td></tr>`).join('')
+        <td class="nowrap">${actionButtons(s.name)}</td></tr>`).join('')
     : '<tr><td class="muted">None yet.</td></tr>';
 }
 
@@ -250,10 +256,49 @@ async function exportFile(kind, name, fmt, button, statusEl) {
   button.disabled = false;
 }
 
+async function openInMuseScore(kind, name, button, statusEl) {
+  button.disabled = true;
+  statusEl.textContent = `Opening ${name} in MuseScore…`;
+  const res = await post('/api/open', {kind, name});
+  const text = await res.text();
+  statusEl.innerHTML = res.ok
+    ? esc(`Opened ${JSON.parse(text).mscz} in MuseScore. Save there with ⌘S, then come back: the edits load here by themselves.`)
+    : `<span class="error">${esc(text)}</span>`;
+  button.disabled = false;
+}
+
+function act(kind, name, button, statusEl) {
+  if (button.dataset.act === 'edit') openInMuseScore(kind, name, button, statusEl);
+  else exportFile(kind, name, button.dataset.act, button, statusEl);
+}
+
+// Bring back what was saved in MuseScore: when this page gets focus again, or on request.
+let syncing = false;
+async function syncEdits(asked) {
+  if (syncing) return;
+  syncing = true;
+  try {
+    const res = await post('/api/sync', {});
+    const text = await res.text();
+    if (!res.ok) { $('#rstatus').innerHTML = `<span class="error">${esc(text)}</span>`; return; }
+    const {synced} = JSON.parse(text);
+    if (synced.length) {
+      $('#rstatus').textContent = `Loaded the edits saved in MuseScore: ${synced.join(', ')}.`;
+      await refresh();
+    } else if (asked) {
+      $('#rstatus').textContent = 'Nothing new saved in MuseScore.';
+    }
+  } finally {
+    syncing = false;
+  }
+}
+addEventListener('focus', () => syncEdits(false));
+$('#sync').onclick = () => syncEdits(true);
+
 const results = $('#results');
 results.addEventListener('click', e => {
   const t = e.target;
-  if (t.dataset.exp !== undefined) exportFile('result', state.results[+t.dataset.exp].output_name, t.dataset.fmt, t, $('#rstatus'));
+  if (t.dataset.act) act('result', state.results[+t.closest('tr').dataset.i].output_name, t, $('#rstatus'));
   if (t.dataset.up !== undefined) move(+t.dataset.up, +t.dataset.up - 1, 'up');
   if (t.dataset.down !== undefined) move(+t.dataset.down, +t.dataset.down + 1, 'down');
   if (t.dataset.ren !== undefined) editName(t, state.results[+t.dataset.ren].stem, '/api/rename', $('#rstatus'));
@@ -314,6 +359,8 @@ $('#combine').onclick = async () => {
   const name = $('#fullname').value.trim();
   const samples = state.results.filter(r => r.include).map(r => r.output_name);
   if (!samples.length) { $('#cstatus').textContent = 'Tick at least one result.'; return; }
+  if (state.scores.some(s => s.name === name && s.mscz)
+      && !confirm(`The full score ${name} has been opened in MuseScore. Concatenating again replaces it, with any edits made to it there. Continue?`)) return;
   $('#combine').disabled = true;
   $('#cstatus').textContent = `Concatenating ${samples.length} results and rendering them in MuseScore…`;
   const res = await post('/api/combine', {name, samples});
@@ -331,7 +378,7 @@ $('#combine').onclick = async () => {
 
 const scores = $('#scores');
 scores.addEventListener('click', e => {
-  if (e.target.dataset.sexp !== undefined) exportFile('score', state.scores[+e.target.dataset.sexp].name, e.target.dataset.fmt, e.target, $('#sstatus'));
+  if (e.target.dataset.act) act('score', state.scores[+e.target.closest('tr').dataset.s].name, e.target, $('#sstatus'));
   if (e.target.dataset.score !== undefined) editName(e.target, state.scores[+e.target.dataset.score].name, '/api/rename-score', $('#sstatus'));
 });
 scores.addEventListener('keydown', e => {
@@ -392,7 +439,7 @@ $('#theme').onclick = () => {
 systemDark.addEventListener('change', showTheme);
 showTheme();
 
-refresh();
+refresh().then(() => syncEdits(false));
 </script></body></html>
 """
 
@@ -435,12 +482,14 @@ def read_scores() -> list[dict]:
     for xml in sorted(SCORES.glob("*.musicxml")) if SCORES.is_dir() else []:
         pdf = xml.with_suffix(".pdf")
         out.append({"name": nfc(xml.stem), "xml": str(xml.relative_to(ROOT)),
-                    "pdf": str(pdf.relative_to(ROOT)) if pdf.exists() else "", "sources": sources_of(xml)})
+                    "pdf": str(pdf.relative_to(ROOT)) if pdf.exists() else "", "sources": sources_of(xml),
+                    "mscz": xml.with_suffix(".mscz").exists()})
     return out
 
 
 def combine(name: str, samples: list[str]) -> dict:
     name = check_name(name)
+    sync()  # concatenate what was last saved in MuseScore
     rows = {r["output_name"]: r for r in read_results()}
     missing = [s for s in samples if not rows.get(nfc(s), {}).get("output")]
     if missing:
@@ -477,8 +526,8 @@ def import_upload(name: str, data: bytes) -> dict:
     return row
 
 
-def export_file(kind: str, name: str, fmt: str) -> dict:
-    """Export a result ("result") or a full score ("score") to exports/<name>.pdf|.mid."""
+def source_xml(kind: str, name: str) -> Path:
+    """The MusicXML of a result ("result") or a full score ("score")."""
     if kind == "result":
         output = next((r["output"] for r in read_results() if r["output_name"] == nfc(name)), "")
         xml = ROOT / output if output else None
@@ -488,7 +537,19 @@ def export_file(kind: str, name: str, fmt: str) -> dict:
         raise ValueError(f"unknown kind {kind!r}")
     if xml is None:
         raise ValueError(f"no MusicXML for {name}")
-    return {"file": str(export(xml, fmt).relative_to(ROOT))}
+    return xml
+
+
+def export_file(kind: str, name: str, fmt: str) -> dict:
+    """Export a result or a full score to exports/<name>.pdf|.mid."""
+    sync()
+    return {"file": str(export(source_xml(kind, name), fmt).relative_to(ROOT))}
+
+
+def open_file(kind: str, name: str) -> dict:
+    """Open a result or a full score in MuseScore Studio, as its MuseScore file (see edits.py)."""
+    sync()  # so a stale copy isn't reopened over edits saved since
+    return {"mscz": str(open_in_musescore(source_xml(kind, name)).relative_to(ROOT))}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -551,7 +612,12 @@ class Handler(BaseHTTPRequestHandler):
                 state.update({k: body[k] for k in ("order", "exclude", "name") if k in body})
                 write_state(state)
                 return self.send(200, "ok")
+            if path == "/api/sync":
+                return self.send_json({"synced": sync()})
+            if path == "/api/open":
+                return self.send_json(open_file(body["kind"], body["name"]))
             if path == "/api/rename":
+                sync()
                 names = rename_sample(ROOT, body["old"], body["new"])
                 state = read_state()
                 for key in ("order", "exclude"):
@@ -561,6 +627,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/combine":
                 return self.send_json(combine(body.get("name", ""), body.get("samples", [])))
             if path == "/api/rename-score":
+                sync()
                 return self.send_json({"name": rename_score(SCORES, body["old"], body["new"])})
             if path == "/api/export":
                 return self.send_json(export_file(body["kind"], body["name"], body["format"]))

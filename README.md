@@ -13,8 +13,10 @@ work/      page images as fed to HOMR, HOMR's own <name>.homr.musicxml and *_tea
 review/    run-results.csv, environment.md, review.md (notes and findings), renders/ (MuseScore PDFs),
            truth/ (hand-checked transcriptions for score_check.py)
 exports/   scores saved from MuseScore after review; PDF/MIDI exports from the UI or export.py
-scores/    full scores concatenated from results in the UI (<name>.musicxml + MuseScore PDF)
-scripts/   run_batch.py, postprocess.py, score_check.py, combine.py, samples.py, export.py, ui.py
+scores/    full scores concatenated from results in the UI (<name>.musicxml + MuseScore PDF,
+           and <name>.mscz once opened in MuseScore from the UI)
+edits/     <name>.mscz: results opened in MuseScore from the UI, where your edits are saved
+scripts/   run_batch.py, postprocess.py, score_check.py, combine.py, samples.py, export.py, edits.py, ui.py
 tests/     uv run pytest
 ```
 
@@ -68,6 +70,13 @@ results without a batch run. In the results you can also:
   is named (input, `work/`, outputs, log, render, its rows in `run-results.csv` and `review.md`,
   its pages in `review/truth/`, its options in `inputs/postprocess.json`), so the next run keeps
   the new name. A full score's title changes with its name.
+- **Edit** a result or a full score in MuseScore Studio with its Edit button. The first time, it
+  is converted to a MuseScore file (`edits/<name>.mscz`, or `scores/<name>.mscz` for a full
+  score) and that file opens in MuseScore. Edit, save with ⌘S (not Export), and switch back to
+  the browser: the page converts what you saved back into the MusicXML and re-renders it (or press
+  *Reload edits from MuseScore*). The result's status becomes `edited`, concatenation and export
+  use the edited version, and a later batch run keeps your edit instead of HOMR's new output.
+  Concatenating a full score again under the same name replaces it, edits included (you're asked).
 - **Export** a result or a full score to PDF or MIDI with its PDF / MIDI buttons: MuseScore
   writes `exports/<name>.pdf` or `.mid` and the browser downloads it. The same from the command
   line: `uv run python scripts/export.py pdf|midi <file.musicxml> ...`

@@ -45,6 +45,14 @@ def test_a_final_barline_is_dropped_at_a_join_but_repeats_and_the_last_one_stay(
     assert barlines[1].find("repeat") is not None and barlines[2] is not None
 
 
+def test_the_title_musescore_shows_is_set_too(tmp_path):
+    credit = '<credit page="1"><credit-type>title</credit-type><credit-words>sec-m01</credit-words></credit>'
+    a = write(tmp_path, score(WHOLE).replace('<part id="P1">', credit + '<part id="P1">'), "a.musicxml")
+    out = tmp_path / "full.musicxml"
+    concatenate([a], "Full", out)
+    assert ET.parse(out).getroot().findtext("credit/credit-words") == "Full"
+
+
 def test_scores_with_different_staves_are_refused(tmp_path):
     a = write(tmp_path, score(WHOLE), "a.musicxml")
     b = write(tmp_path, score(note("C5", 16)).replace("<staves>2</staves>", "<staves>1</staves>"), "b.musicxml")

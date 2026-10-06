@@ -10,6 +10,8 @@ inputs/<name>.(png|jpg|jpeg|pdf)
 inputs/<name>.(musicxml|mxl)            (a score you already have, e.g. exported from MuseScore)
   -> outputs/<name>.musicxml            (copied as is, uncompressed; no HOMR, no postprocess)
 all -> review/run-results.csv, review/environment.md, new rows in review/review.md
+A result edited in MuseScore (edits/<name>.mscz, see edits.py) keeps its edit: its output is
+made from that file again, not from the new HOMR output.
 
 Per-input options for postprocess.py go in inputs/postprocess.json, keyed by a glob on the
 output name, e.g. {"merkurius-*": {"treble_8va": 1}}.
@@ -49,6 +51,7 @@ MSCORE_CANDIDATES = [
     "/Applications/MuseScore 4.app/Contents/MacOS/mscore",
     "/Applications/MuseScore Studio 4.app/Contents/MacOS/mscore",
 ]
+MUSESCORE_APPS = ["/Applications/MuseScore 4.app", "/Applications/MuseScore Studio 4.app"]  # to open files in
 MSCORE_LOGS = Path.home() / "Library/Application Support/MuseScore/MuseScore4/logs"
 TABLE_HEADER = "| sample | converted | opens in MuseScore | major errors (notes / rhythms / voices / measures / layout) | correction effort | notes |"
 
@@ -166,12 +169,21 @@ def write_results(rows: list[dict]) -> None:
         w.writerows(rows)
 
 
-def upsert_result(row: dict) -> None:
-    """Replace the row with the same output name in run-results.csv, or add it at the end."""
+def read_result_rows() -> list[dict]:
     path = REVIEW / "run-results.csv"
+    return list(csv.DictReader(path.open())) if path.exists() else []
+
+
+def upsert_result(row: dict) -> None:
+    """Replace the row with the same output name in run-results.csv, in place, or add it at the end."""
     nfc = lambda s: unicodedata.normalize("NFC", s)  # noqa: E731
-    rows = list(csv.DictReader(path.open())) if path.exists() else []
-    write_results([r for r in rows if nfc(r["output_name"]) != nfc(row["output_name"])] + [row])
+    rows = read_result_rows()
+    same = [i for i, r in enumerate(rows) if nfc(r["output_name"]) == nfc(row["output_name"])]
+    if same:
+        rows[same[0]] = row
+    else:
+        rows.append(row)
+    write_results([r for i, r in enumerate(rows) if i not in same[1:]])
 
 
 def musescore_convert(mscore: str, src: Path, dst: Path) -> str:
@@ -265,6 +277,9 @@ def main() -> None:
     if not sources:
         sys.exit("No images, PDFs or MusicXML files in inputs/")
     mscore = mscore_bin()
+    import edits  # noqa: PLC0415 - edits imports this module
+    edits.sync(mscore)  # edits saved in MuseScore but not brought back yet
+    edited = {r["output_name"] for r in read_result_rows() if r["status"] == "edited"}
 
     rows: list[dict] = []
     for src in sources:
@@ -291,11 +306,15 @@ def main() -> None:
             rows.append(dict(source=src.name, output_name=name, status=status, seconds=seconds,
                              output=xml, musescore=ms, log=f"logs/{name}.log", fixes=fixes))
 
+    for i, row in enumerate(rows):  # an edit made in MuseScore wins over the new HOMR output
+        if mscore and row["output_name"] in edited and (edits.EDITS / f"{row['output_name']}.mscz").exists():
+            print(f"[edit] {row['output_name']}: keeping edits/{row['output_name']}.mscz", flush=True)
+            rows[i] = edits.apply_edit(row, mscore)
     write_results(rows)
     write_environment(mscore, args.timeout)
     append_review_rows(rows)
 
-    ok = sum(r["status"] in ("ok", "imported") for r in rows)
+    ok = sum(r["status"] in ("ok", "imported", "edited") for r in rows)
     print(f"\n{ok}/{len(rows)} pages converted or imported. See review/run-results.csv and fill in review/review.md.")
 
 

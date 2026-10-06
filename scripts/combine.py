@@ -38,6 +38,22 @@ def set_title(root: ET.Element, title: str) -> None:
     (work.find("work-title") if work.find("work-title") is not None else ET.SubElement(work, "work-title")).text = title
     if (movement := root.find("movement-title")) is not None:
         movement.text = title
+    for credit in root.findall("credit"):  # the title text MuseScore exports and shows
+        if credit.findtext("credit-type") == "title" and (words := credit.find("credit-words")) is not None:
+            words.text = title
+
+
+def set_sources(root: ET.Element, sources: list[str]) -> None:
+    """Record the files a full score was concatenated from in its <identification>."""
+    identification = root.find("identification")
+    if identification is None:
+        identification = ET.Element("identification")
+        later = [i for i, el in enumerate(root) if el.tag in ("defaults", "credit", "part-list", "part")]
+        root.insert(later[0] if later else len(root), identification)
+    for misc in identification.findall("miscellaneous"):
+        identification.remove(misc)
+    field = ET.SubElement(ET.SubElement(identification, "miscellaneous"), "miscellaneous-field", name=SOURCES_FIELD)
+    field.text = ", ".join(sources)
 
 
 def concatenate(sources: list[Path], title: str, dst: Path) -> int:
@@ -88,15 +104,7 @@ def concatenate(sources: list[Path], title: str, dst: Path) -> int:
         count = max(count, len(measures))
 
     set_title(first, title)
-    identification = first.find("identification")
-    if identification is None:
-        identification = ET.Element("identification")
-        later = [i for i, el in enumerate(first) if el.tag in ("defaults", "credit", "part-list", "part")]
-        first.insert(later[0] if later else len(first), identification)
-    for misc in identification.findall("miscellaneous"):
-        identification.remove(misc)
-    field = ET.SubElement(ET.SubElement(identification, "miscellaneous"), "miscellaneous-field", name=SOURCES_FIELD)
-    field.text = ", ".join(s.name for s in sources)
+    set_sources(first, [s.name for s in sources])
 
     ET.indent(trees[0], space="  ")
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +116,14 @@ def sources_of(path: Path) -> list[str]:
     """The files a full score was concatenated from, as recorded in it."""
     field = ET.parse(path).getroot().find(f"identification/miscellaneous/miscellaneous-field[@name='{SOURCES_FIELD}']")
     return [s.strip() for s in field.text.split(",")] if field is not None and field.text else []
+
+
+def keep_sources(path: Path, sources: list[str]) -> None:
+    """Put the sources back after MuseScore rewrote the file (it drops our <miscellaneous> field)."""
+    if sources and sources_of(path) != sources:
+        tree = ET.parse(path)
+        set_sources(tree.getroot(), sources)
+        tree.write(path, encoding="UTF-8", xml_declaration=True)
 
 
 def retitle(path: Path, title: str) -> None:
