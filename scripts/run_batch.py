@@ -7,7 +7,11 @@ inputs/<name>.(png|jpg|jpeg|pdf)
   -> outputs/<name>.musicxml            (images; HOMR's output fixed by postprocess.py)
   -> outputs/<name>-pNN.musicxml        (one per PDF page)
   -> logs/<output-name>.log             (homr stdout/stderr)
-  -> review/run-results.csv, review/environment.md, new rows in review/review.md
+inputs/<name>.(musicxml|mxl)            (a score you already have, e.g. exported from MuseScore)
+  -> outputs/<name>.musicxml            (copied as is, uncompressed; no HOMR, no postprocess)
+all -> review/run-results.csv, review/environment.md, new rows in review/review.md
+A result edited in MuseScore (edits/<name>.mscz, see edits.py) keeps its edit: its output is
+made from that file again, not from the new HOMR output.
 
 Per-input options for postprocess.py go in inputs/postprocess.json, keyed by a glob on the
 output name, e.g. {"merkurius-*": {"treble_8va": 1}}.
@@ -28,6 +32,8 @@ import subprocess
 import sys
 import time
 import unicodedata
+import xml.etree.ElementTree as ET
+import zipfile
 from importlib.metadata import version
 from pathlib import Path
 
@@ -36,12 +42,16 @@ import postprocess
 ROOT = Path(__file__).resolve().parent.parent
 INPUTS, OUTPUTS, LOGS, WORK, REVIEW = (ROOT / d for d in ("inputs", "outputs", "logs", "work", "review"))
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}  # what homr accepts
+MUSICXML_EXTS = {".musicxml", ".mxl"}  # imported as they are
+SOURCE_EXTS = IMAGE_EXTS | {".pdf"} | MUSICXML_EXTS
+RESULT_FIELDS = ["source", "output_name", "status", "seconds", "output", "musescore", "log", "fixes"]
 MSCORE_CANDIDATES = [
     "mscore",
     "musescore",
     "/Applications/MuseScore 4.app/Contents/MacOS/mscore",
     "/Applications/MuseScore Studio 4.app/Contents/MacOS/mscore",
 ]
+MUSESCORE_APPS = ["/Applications/MuseScore 4.app", "/Applications/MuseScore Studio 4.app"]  # to open files in
 MSCORE_LOGS = Path.home() / "Library/Application Support/MuseScore/MuseScore4/logs"
 TABLE_HEADER = "| sample | converted | opens in MuseScore | major errors (notes / rhythms / voices / measures / layout) | correction effort | notes |"
 
@@ -119,19 +129,81 @@ def fix_output(name: str, raw: Path) -> tuple[str, str]:
     return str(out.relative_to(ROOT)), fixes
 
 
-def check_musescore(mscore: str | None, xml: str, name: str, renders: Path = REVIEW / "renders") -> str:
-    if not mscore or not xml:
-        return "skipped"
-    renders.mkdir(exist_ok=True)
+def load_musicxml(src: Path) -> bytes:
+    """The score in a .musicxml or compressed .mxl file, checked to be a partwise MusicXML score."""
+    if src.suffix.lower() == ".mxl":
+        try:
+            with zipfile.ZipFile(src) as z:
+                rootfile = ET.fromstring(z.read("META-INF/container.xml")).find(".//rootfile")
+                if rootfile is None or not rootfile.get("full-path"):
+                    raise ValueError(f"{src.name}: no rootfile in META-INF/container.xml")
+                data = z.read(rootfile.get("full-path"))
+        except (zipfile.BadZipFile, KeyError) as e:
+            raise ValueError(f"{src.name} is not a compressed MusicXML file ({e})") from e
+    else:
+        data = src.read_bytes()
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as e:
+        raise ValueError(f"{src.name} is not valid XML ({e})") from e
+    if root.tag != "score-partwise":
+        raise ValueError(f"{src.name} is not a partwise MusicXML score (its root is <{root.tag}>)")
+    return data
+
+
+def import_musicxml(src: Path, mscore: str | None) -> dict:
+    """inputs/<name>.(musicxml|mxl) -> outputs/<name>.musicxml, rendered like a HOMR result."""
+    data = load_musicxml(src)
+    OUTPUTS.mkdir(exist_ok=True)
+    out = OUTPUTS / f"{src.stem}.musicxml"
+    out.write_bytes(data)
+    xml = str(out.relative_to(ROOT))
+    return dict(source=src.name, output_name=src.stem, status="imported", seconds=0, output=xml,
+                musescore=check_musescore(mscore, xml, src.stem), log="", fixes="")
+
+
+def write_results(rows: list[dict]) -> None:
+    with (REVIEW / "run-results.csv").open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=RESULT_FIELDS)
+        w.writeheader()
+        w.writerows(rows)
+
+
+def read_result_rows() -> list[dict]:
+    path = REVIEW / "run-results.csv"
+    return list(csv.DictReader(path.open())) if path.exists() else []
+
+
+def upsert_result(row: dict) -> None:
+    """Replace the row with the same output name in run-results.csv, in place, or add it at the end."""
+    nfc = lambda s: unicodedata.normalize("NFC", s)  # noqa: E731
+    rows = read_result_rows()
+    same = [i for i, r in enumerate(rows) if nfc(r["output_name"]) == nfc(row["output_name"])]
+    if same:
+        rows[same[0]] = row
+    else:
+        rows.append(row)
+    write_results([r for i, r in enumerate(rows) if i not in same[1:]])
+
+
+def musescore_convert(mscore: str, src: Path, dst: Path) -> str:
+    """Have MuseScore write src as dst, in the format of dst's extension. Returns "yes" or "no (reason)"."""
     started = time.time() - 1
     try:
-        p = subprocess.run([mscore, "-o", str(renders / f"{name}.pdf"), str(ROOT / xml)],
-                           capture_output=True, text=True, timeout=180)
+        p = subprocess.run([mscore, "-o", str(dst), str(src)], capture_output=True, text=True, timeout=180)
     except subprocess.TimeoutExpired:
         return "no (timeout)"
     if p.returncode == 0:
         return "yes"
-    return f"no (exit {p.returncode}{': ' + reason if (reason := musescore_load_error(xml, started)) else ''})"
+    logged = str(src.relative_to(ROOT)) if src.is_relative_to(ROOT) else str(src)
+    return f"no (exit {p.returncode}{': ' + reason if (reason := musescore_load_error(logged, started)) else ''})"
+
+
+def check_musescore(mscore: str | None, xml: str, name: str, renders: Path = REVIEW / "renders") -> str:
+    if not mscore or not xml:
+        return "skipped"
+    renders.mkdir(exist_ok=True)
+    return musescore_convert(mscore, ROOT / xml, renders / f"{name}.pdf")
 
 
 def musescore_load_error(xml: str, since: float) -> str:
@@ -201,13 +273,24 @@ def main() -> None:
 
     for d in (OUTPUTS, LOGS, WORK, REVIEW):
         d.mkdir(exist_ok=True)
-    sources = sorted(p for p in INPUTS.iterdir() if p.suffix.lower() in IMAGE_EXTS | {".pdf"})
+    sources = sorted(p for p in INPUTS.iterdir() if p.suffix.lower() in SOURCE_EXTS)
     if not sources:
-        sys.exit("No images or PDFs in inputs/")
+        sys.exit("No images, PDFs or MusicXML files in inputs/")
     mscore = mscore_bin()
+    import edits  # noqa: PLC0415 - edits imports this module
+    edits.sync(mscore)  # edits saved in MuseScore but not brought back yet
+    edited = {r["output_name"] for r in read_result_rows() if r["status"] == "edited"}
 
     rows: list[dict] = []
     for src in sources:
+        if src.suffix.lower() in MUSICXML_EXTS:
+            print(f"[import] {src.stem} ...", flush=True)
+            try:
+                rows.append(import_musicxml(src, mscore))
+            except (ValueError, OSError) as e:
+                rows.append(dict(source=src.name, output_name=src.stem, status=f"import failed ({e})",
+                                 seconds=0, output="", musescore="skipped", log="", fixes=""))
+            continue
         try:
             pages = prepare_pages(src)
         except Exception as e:  # noqa: BLE001 - record and move on
@@ -223,15 +306,16 @@ def main() -> None:
             rows.append(dict(source=src.name, output_name=name, status=status, seconds=seconds,
                              output=xml, musescore=ms, log=f"logs/{name}.log", fixes=fixes))
 
-    with (REVIEW / "run-results.csv").open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0]))
-        w.writeheader()
-        w.writerows(rows)
+    for i, row in enumerate(rows):  # an edit made in MuseScore wins over the new HOMR output
+        if mscore and row["output_name"] in edited and (edits.EDITS / f"{row['output_name']}.mscz").exists():
+            print(f"[edit] {row['output_name']}: keeping edits/{row['output_name']}.mscz", flush=True)
+            rows[i] = edits.apply_edit(row, mscore)
+    write_results(rows)
     write_environment(mscore, args.timeout)
     append_review_rows(rows)
 
-    ok = sum(r["status"] == "ok" for r in rows)
-    print(f"\n{ok}/{len(rows)} pages converted. See review/run-results.csv and fill in review/review.md.")
+    ok = sum(r["status"] in ("ok", "imported", "edited") for r in rows)
+    print(f"\n{ok}/{len(rows)} pages converted or imported. See review/run-results.csv and fill in review/review.md.")
 
 
 if __name__ == "__main__":

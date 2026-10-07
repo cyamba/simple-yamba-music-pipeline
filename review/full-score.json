@@ -1,17 +1,14 @@
 {
  "order": [
   "merkurius-m01-10",
+  "merkurius-m11-21",
   "merkurius-m22-33",
   "merkurius-m34-45",
   "merkurius-m46-51",
   "skanna0523"
  ],
  "exclude": [
-  "merkurius-m01-10",
-  "merkurius-m22-33",
-  "merkurius-m34-45",
-  "merkurius-m46-51",
   "skanna0523"
  ],
- "name": ""
+ "name": "Merkurius"
 }
