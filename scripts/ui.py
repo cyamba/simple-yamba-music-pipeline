@@ -1,5 +1,5 @@
 """Tiny local UI: upload scores to inputs/, run the batch, browse results, put them in order,
-rename them and concatenate them into a full score.
+rename them and concatenate them into a full score. It can also find every MusicXML file on the computer.
 
 Usage:  uv run python scripts/ui.py [--port 8765]   then open http://127.0.0.1:8765
 """
@@ -16,12 +16,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from combine import concatenate, sources_of
-from run_batch import IMAGE_EXTS, INPUTS, REVIEW, ROOT, check_musescore, mscore_bin
+from find_musicxml import Search
+from run_batch import IMAGE_EXTS, INPUTS, MSCORE_CANDIDATES, REVIEW, ROOT, check_musescore, mscore_bin
 from samples import check_name, nfc, rename_sample, rename_score
 
 ALLOWED_EXTS = IMAGE_EXTS | {".pdf"}
 SCORES = ROOT / "scores"
 STATE = REVIEW / "full-score.json"  # order of the results, which go into the full score, its name
+SEARCH = Search()
 SERVABLE_DIRS = ("inputs", "outputs", "logs", "review", "scores")
 CONTENT_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
                  ".jpeg": "image/jpeg", ".musicxml": "application/vnd.recordare.musicxml+xml",
@@ -79,6 +81,11 @@ PAGE = """<!doctype html>
   input.rename { font: inherit; width: 16em; }
   .combine { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 1rem; }
   .combine input { font: inherit; padding: 5px 8px; width: 14em; }
+  #found .fname { overflow-wrap: anywhere; min-width: 12em; }
+  #found .path { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  #found .path:hover, #found .path:focus { white-space: normal; overflow-wrap: anywhere; background: var(--accent-bg); outline: none; }
+  #found th .sort { font: inherit; font-weight: bold; padding: 0; background: none; border: 0; color: var(--fg); cursor: pointer; }
+  #found th .sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   #theme { display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px; background: none;
            color: var(--fg); border: 1px solid var(--border); border-radius: 999px; }
   #theme:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -116,6 +123,17 @@ PAGE = """<!doctype html>
 <h2>Full scores</h2>
 <table id="scores"></table>
 <p id="sstatus" class="small" role="status"></p>
+
+<h2>MusicXML on this computer</h2>
+<p class="muted small">Finds .musicxml, .mxl and MusicXML .xml files on every drive. Hover over a path (or tab to it) to see all of it.</p>
+<div class="combine">
+  <button id="search">Search this computer</button>
+  <button id="stopsearch" hidden>Stop</button>
+  <input id="filter" type="search" placeholder="filter by name or folder" aria-label="Filter the files found">
+</div>
+<p id="fstatus" class="small" role="status"></p>
+<table id="found"></table>
+<p id="faction" class="small" role="status"></p>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -343,6 +361,96 @@ $('#run').onclick = async () => {
   refresh();
 };
 
+// MusicXML on this computer: the server searches in the background; poll it for the rows found since last time.
+const SHOW = 500;  // rows drawn at once; the filter narrows the rest
+let found = {run: null, rows: [], s: {phase: 'idle'}}, sortBy = {key: 'modified', desc: true}, polling = null;
+const took = t => t < 60 ? `${Math.round(t)} s` : `${Math.floor(t / 60)} min ${Math.round(t % 60)} s`;
+const num = n => n.toLocaleString();
+
+async function pollSearch() {
+  clearTimeout(polling);
+  let s = await (await fetch(`/api/search?since=${found.rows.length}`)).json();
+  if (s.run !== found.run) {  // a new search: start over
+    found = {run: s.run, rows: [], s};
+    s = await (await fetch('/api/search?since=0')).json();
+  }
+  const added = s.rows.length;
+  found.rows = found.rows.concat(s.rows);
+  found.s = s;
+  showSearch();
+  if (added || $('#found').innerHTML === '' || s.phase !== 'walk') renderFound();
+  if (s.phase === 'spotlight' || s.phase === 'walk') polling = setTimeout(pollSearch, 1000);
+}
+
+function showSearch() {
+  const s = found.s, busy = s.phase === 'spotlight' || s.phase === 'walk', n = num(found.rows.length);
+  $('#search').disabled = busy;
+  $('#search').textContent = s.phase === 'idle' ? 'Search this computer' : 'Search again';
+  $('#stopsearch').hidden = !busy;
+  let text = {spotlight: `Asking Spotlight… ${n} found so far.`,
+              walk: `Searching ${s.current} — ${num(s.dirs)} folders, ${n} found.`,
+              done: `Done in ${took(s.elapsed)}: ${n} MusicXML files in ${num(s.dirs)} folders.`,
+              stopped: `Stopped after ${took(s.elapsed)}: ${n} found in ${num(s.dirs)} folders.`}[s.phase] || '';
+  if (s.unreadable) text += ` ${num(s.unreadable)} folders couldn't be read` +
+    (s.platform === 'darwin' ? ' (give your terminal Full Disk Access in System Settings › Privacy & Security to include them).' : '.');
+  $('#fstatus').textContent = text;
+}
+
+function renderFound() {
+  const table = $('#found'), s = found.s;
+  if (s.phase === 'idle') { table.innerHTML = ''; return; }
+  const q = $('#filter').value.trim().toLowerCase(), {key, desc} = sortBy;
+  const rows = found.rows.filter(r => !q || r.path.toLowerCase().includes(q))
+    .sort((a, b) => (key === 'modified' ? a.modified - b.modified : a[key].localeCompare(b[key])) * (desc ? -1 : 1));
+  // Re-rendering mustn't steal keyboard focus from a row
+  const focusKey = table.contains(document.activeElement) ? document.activeElement.dataset.k : null;
+  const th = (k, label) => `<th aria-sort="${key === k ? (desc ? 'descending' : 'ascending') : 'none'}">` +
+    `<button class="sort" data-sort="${k}" data-k="sort:${k}">${label}${key === k ? (desc ? ' ↓' : ' ↑') : ''}</button></th>`;
+  const where = {darwin: 'Finder', win32: 'Explorer'}[s.platform] || 'the file manager';
+  table.innerHTML = rows.length
+    ? `<tr>${th('name', 'name')}${th('modified', 'last modified')}${th('path', 'path')}<th></th></tr>` +
+      rows.slice(0, SHOW).map(r => { const p = esc(r.path), d = new Date(r.modified * 1000); return `<tr>
+        <td class="fname">${esc(r.name)}</td>
+        <td class="nowrap" title="${esc(d.toISOString())}">${esc(d.toLocaleString())}</td>
+        <td class="path" tabindex="0" title="${p}" data-k="path:${p}">${p.split('/').join('/<wbr>').split('\\\\').join('\\\\<wbr>')}</td>
+        <td class="nowrap"><button data-reveal="${p}" data-k="reveal:${p}" title="Show in ${where}" aria-label="Show ${esc(r.name)} in ${where}">Reveal</button>
+          <button data-open="${p}" data-k="open:${p}" title="Open in MuseScore" aria-label="Open ${esc(r.name)} in MuseScore">Open</button>
+          <button data-copy="${p}" data-k="copy:${p}" title="Copy the path" aria-label="Copy the path of ${esc(r.name)}">Copy</button></td></tr>`; }).join('') +
+      (rows.length > SHOW ? `<tr><td colspan="4" class="muted small">Showing ${num(SHOW)} of ${num(rows.length)}; filter to narrow.</td></tr>` : '')
+    : `<tr><td class="muted">${q && found.rows.length ? 'Nothing matches the filter.' : s.phase === 'spotlight' || s.phase === 'walk' ? 'Nothing found yet.' : 'No MusicXML files found.'}</td></tr>`;
+  if (focusKey) [...table.querySelectorAll('[data-k]')].find(el => el.dataset.k === focusKey)?.focus();
+}
+
+$('#search').onclick = async () => {
+  $('#faction').textContent = '';
+  await post('/api/search', {});
+  pollSearch();
+};
+$('#stopsearch').onclick = async () => { await post('/api/search/stop', {}); pollSearch(); };
+$('#filter').oninput = renderFound;
+$('#found').addEventListener('click', async e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.sort) {
+    const k = b.dataset.sort;
+    sortBy = {key: k, desc: sortBy.key === k ? !sortBy.desc : k === 'modified'};
+    return renderFound();
+  }
+  if (b.dataset.copy !== undefined) {
+    try {
+      await navigator.clipboard.writeText(b.dataset.copy);
+      $('#faction').textContent = `Copied ${b.dataset.copy}`;
+    } catch (err) {
+      $('#faction').innerHTML = `<span class="error">Couldn't copy: ${esc(err.message)}</span>`;
+    }
+    return;
+  }
+  const action = b.dataset.reveal !== undefined ? 'reveal' : b.dataset.open !== undefined ? 'open' : null;
+  if (!action) return;
+  const res = await post('/api/' + action, {path: b.dataset[action]});
+  $('#faction').innerHTML = res.ok ? '' : `<span class="error">${esc(await res.text())}</span>`;
+});
+
 // Dark mode: follows the system until switched; switching back to the system's mode follows it again.
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 const isDark = () => (document.documentElement.dataset.theme || (systemDark.matches ? 'dark' : 'light')) === 'dark';
@@ -359,6 +467,7 @@ systemDark.addEventListener('change', showTheme);
 showTheme();
 
 refresh();
+pollSearch();  // picks up a search that is still running from before a reload
 </script></body></html>
 """
 
@@ -420,6 +529,32 @@ def combine(name: str, samples: list[str]) -> dict:
             "pdf": str(pdf.relative_to(ROOT)) if pdf.exists() and musescore == "yes" else ""}
 
 
+def launch_found(action: str, path: str) -> None:
+    """Show a search result in Finder/Explorer, or open it in MuseScore. Only search results are accepted,
+    so no web page can use this endpoint to launch whatever file it likes."""
+    if not SEARCH.found(path):
+        raise ValueError("That file isn't in the search results; search again.")
+    if not Path(path).is_file():
+        raise ValueError(f"{path} is gone.")
+    if action == "open":
+        mscore = mscore_bin()
+        if not mscore:
+            raise ValueError("MuseScore Studio isn't installed (or isn't where run_batch.py looks for it).")
+        # On macOS hand it to the app bundle, so a MuseScore that is already open opens it in a new tab
+        # (Homebrew's mscore is a shim script outside the bundle, hence the known bundle paths too)
+        app = next((p for c in (mscore, *MSCORE_CANDIDATES) for p in Path(c).resolve().parents
+                    if p.suffix == ".app" and p.is_dir()), None)
+        cmd = ["open", "-a", str(app), path] if sys.platform == "darwin" and app else [mscore, path]
+    elif sys.platform == "darwin":
+        cmd = ["open", "-R", path]
+    elif sys.platform == "win32":
+        cmd = ["explorer", f"/select,{path}"]
+    else:
+        cmd = ["xdg-open", str(Path(path).parent)]
+    subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+
+
 class Handler(BaseHTTPRequestHandler):
     def send(self, code: int, body: bytes | str, ctype: str = "text/plain; charset=utf-8") -> None:
         data = body.encode() if isinstance(body, str) else body
@@ -448,6 +583,9 @@ class Handler(BaseHTTPRequestHandler):
             inputs = sorted(p.name for p in INPUTS.iterdir() if p.suffix.lower() in ALLOWED_EXTS)
             return self.send_json({"inputs": inputs, "results": read_results(),
                                    "full": {"name": read_state()["name"]}, "scores": read_scores()})
+        if path == "/api/search":
+            since = parse_qs(urlparse(self.path).query).get("since", ["0"])[0]
+            return self.send_json(SEARCH.snapshot(int(since) if since.isdigit() else 0))
         if path.startswith("/files/"):
             target = (ROOT / path.removeprefix("/files/")).resolve()
             allowed = any(target.is_relative_to(ROOT / d) for d in SERVABLE_DIRS)
@@ -485,6 +623,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(combine(body.get("name", ""), body.get("samples", [])))
             if path == "/api/rename-score":
                 return self.send_json({"name": rename_score(SCORES, body["old"], body["new"])})
+            if path == "/api/search":
+                SEARCH.start()
+                return self.send(200, "ok")
+            if path == "/api/search/stop":
+                SEARCH.stop()
+                return self.send(200, "ok")
+            if path in ("/api/reveal", "/api/open"):
+                launch_found(path.removeprefix("/api/"), body["path"])
+                return self.send(200, "ok")
         except (ValueError, KeyError, OSError, ET.ParseError) as e:
             return self.send(400, str(e) if not isinstance(e, KeyError) else f"missing {e}")
         self.send(404, "not found")

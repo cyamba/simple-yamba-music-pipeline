@@ -13,7 +13,7 @@ review/    run-results.csv, environment.md, review.md (notes and findings), rend
            truth/ (hand-checked transcriptions for score_check.py)
 exports/   scores saved from MuseScore after review
 scores/    full scores concatenated from results in the UI (<name>.musicxml + MuseScore PDF)
-scripts/   run_batch.py, postprocess.py, score_check.py, combine.py, samples.py, ui.py
+scripts/   run_batch.py, postprocess.py, score_check.py, combine.py, samples.py, find_musicxml.py, ui.py
 tests/     uv run pytest
 ```
 
@@ -62,6 +62,15 @@ listens on 127.0.0.1. In the results you can also:
   is named (input, `work/`, outputs, log, render, its rows in `run-results.csv` and `review.md`,
   its pages in `review/truth/`, its options in `inputs/postprocess.json`), so the next run keeps
   the new name. A full score's title changes with its name.
+
+**MusicXML on this computer** searches every drive for `.musicxml`, `.mxl` and `.xml` files that hold
+a MusicXML score. It lists each file with its last-modified date and absolute path; hover over or tab
+to a path to see all of it. Each row can **Reveal** the file in Finder/Explorer, **Open** it in
+MuseScore, or **Copy** its path. On macOS, Spotlight results show up within seconds, then a walk of
+the disk adds the files Spotlight doesn't index. That walk takes a few minutes the first time.
+Folders the terminal can't read are counted, not searched (on macOS, give it Full Disk Access to
+include them). The same from the command line:
+`uv run python scripts/find_musicxml.py [FOLDER ...]`
 
 ## Post-processing
 
