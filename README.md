@@ -13,6 +13,8 @@ work/      page images as fed to HOMR, HOMR's own <name>.homr.musicxml and *_tea
 review/    run-results.csv, environment.md, review.md (notes and findings), renders/ (MuseScore PDFs),
            truth/ (hand-checked transcriptions for score_check.py)
 exports/   scores saved from MuseScore after review; PDF/MIDI exports from the UI or export.py
+completed/ finished pieces: completed/<piece>/ holds the full score (.musicxml + PDF), each segment's
+           MusicXML, PDF and scan, and SOURCES.md (which version of each segment was used)
 scores/    full scores concatenated from results in the UI (<name>.musicxml + MuseScore PDF,
            and <name>.mscz once opened in MuseScore from the UI)
 edits/     <name>.mscz: results opened in MuseScore from the UI, where your edits are saved
@@ -84,7 +86,10 @@ results without a batch run. In the results you can also:
 **MusicXML on this computer** searches every drive for `.musicxml`, `.mxl` and `.xml` files that hold
 a MusicXML score. It lists each file with its last-modified date and absolute path; hover over or tab
 to a path to see all of it. Each row can **Reveal** the file in Finder/Explorer, **Open** it in
-MuseScore, or **Copy** its path. On macOS, Spotlight results show up within seconds, then a walk of
+MuseScore, or **Copy** its path. Tick files and press **Add ticked to results** to make them results you can
+reorder and concatenate. Each one is copied into `inputs/`, the same as an upload, so a HOMR run keeps
+it; the original isn't touched. A name that's already taken gets `-2`, `-3`, and so on. A file that's already in
+`inputs/` isn't added again. On macOS, Spotlight results show up within seconds, then a walk of
 the disk adds the files Spotlight doesn't index. That walk takes a few minutes the first time.
 Folders the terminal can't read are counted, not searched (on macOS, give it Full Disk Access to
 include them). The same from the command line:

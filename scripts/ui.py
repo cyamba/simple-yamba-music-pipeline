@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -88,6 +89,7 @@ PAGE = """<!doctype html>
   input.rename { font: inherit; width: 16em; }
   .combine { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 1rem; }
   .combine input { font: inherit; padding: 5px 8px; width: 14em; }
+  #fstatus { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }  /* one line, so the table doesn't jump */
   #found .fname { overflow-wrap: anywhere; min-width: 12em; }
   #found .path { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
   #found .path:hover, #found .path:focus { white-space: normal; overflow-wrap: anywhere; background: var(--accent-bg); outline: none; }
@@ -137,15 +139,18 @@ PAGE = """<!doctype html>
 <p id="sstatus" class="small" role="status"></p>
 
 <h2>MusicXML on this computer</h2>
-<p class="muted small">Finds .musicxml, .mxl and MusicXML .xml files on every drive. Hover over a path (or tab to it) to see all of it.</p>
+<p class="muted small">Finds .musicxml, .mxl and MusicXML .xml files on every drive. Hover over a path (or tab to it) to see all of it.
+  Tick files and add them to the results to concatenate them with the rest; they are copied into inputs/, the originals stay as they are.</p>
 <div class="combine">
   <button id="search">Search this computer</button>
   <button id="stopsearch" hidden>Stop</button>
   <input id="filter" type="search" placeholder="filter by name or folder" aria-label="Filter the files found">
+  <button id="addfound" disabled>Add ticked to results</button>
 </div>
 <p id="fstatus" class="small" role="status"></p>
-<table id="found"></table>
+<p id="fhint" class="small muted" hidden></p>
 <p id="faction" class="small" role="status"></p>
+<table id="found"></table>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -446,6 +451,7 @@ $('#run').onclick = async () => {
 // MusicXML on this computer: the server searches in the background; poll it for the rows found since last time.
 const SHOW = 500;  // rows drawn at once; the filter narrows the rest
 let found = {run: null, rows: [], s: {phase: 'idle'}}, sortBy = {key: 'modified', desc: true}, polling = null;
+let ticked = new Set(), shown = [];  // paths ticked to add to the results; the rows on screen
 const took = t => t < 60 ? `${Math.round(t)} s` : `${Math.floor(t / 60)} min ${Math.round(t % 60)} s`;
 const num = n => n.toLocaleString();
 
@@ -454,6 +460,7 @@ async function pollSearch() {
   let s = await (await fetch(`/api/search?since=${found.rows.length}`)).json();
   if (s.run !== found.run) {  // a new search: start over
     found = {run: s.run, rows: [], s};
+    ticked.clear();
     s = await (await fetch('/api/search?since=0')).json();
   }
   const added = s.rows.length;
@@ -469,17 +476,20 @@ function showSearch() {
   $('#search').disabled = busy;
   $('#search').textContent = s.phase === 'idle' ? 'Search this computer' : 'Search again';
   $('#stopsearch').hidden = !busy;
-  let text = {spotlight: `Asking Spotlight… ${n} found so far.`,
-              walk: `Searching ${s.current} — ${num(s.dirs)} folders, ${n} found.`,
-              done: `Done in ${took(s.elapsed)}: ${n} MusicXML files in ${num(s.dirs)} folders.`,
-              stopped: `Stopped after ${took(s.elapsed)}: ${n} found in ${num(s.dirs)} folders.`}[s.phase] || '';
-  if (s.unreadable) text += ` ${num(s.unreadable)} folders couldn't be read` +
-    (s.platform === 'darwin' ? ' (give your terminal Full Disk Access in System Settings › Privacy & Security to include them).' : '.');
-  $('#fstatus').textContent = text;
+  const unread = s.unreadable ? `, ${num(s.unreadable)} unreadable` : '';
+  const text = {spotlight: `Asking Spotlight… ${n} found so far.`,
+                walk: `${n} found in ${num(s.dirs)} folders${unread} — searching ${s.current}`,
+                done: `Done in ${took(s.elapsed)}: ${n} MusicXML files in ${num(s.dirs)} folders${unread}.`,
+                stopped: `Stopped after ${took(s.elapsed)}: ${n} found in ${num(s.dirs)} folders${unread}.`}[s.phase] || '';
+  $('#fstatus').textContent = $('#fstatus').title = text;
+  $('#fhint').hidden = busy || !s.unreadable;
+  $('#fhint').textContent = `${num(s.unreadable)} folders couldn't be read, so they weren't searched` +
+    (s.platform === 'darwin' ? '. To include them, give your terminal Full Disk Access in System Settings › Privacy & Security and search again.' : '.');
 }
 
 function renderFound() {
   const table = $('#found'), s = found.s;
+  showTicked();
   if (s.phase === 'idle') { table.innerHTML = ''; return; }
   const q = $('#filter').value.trim().toLowerCase(), {key, desc} = sortBy;
   const rows = found.rows.filter(r => !q || r.path.toLowerCase().includes(q))
@@ -489,16 +499,19 @@ function renderFound() {
   const th = (k, label) => `<th aria-sort="${key === k ? (desc ? 'descending' : 'ascending') : 'none'}">` +
     `<button class="sort" data-sort="${k}" data-k="sort:${k}">${label}${key === k ? (desc ? ' ↓' : ' ↑') : ''}</button></th>`;
   const where = {darwin: 'Finder', win32: 'Explorer'}[s.platform] || 'the file manager';
+  shown = rows.slice(0, SHOW);
+  const all = shown.length && shown.every(r => ticked.has(r.path));
   table.innerHTML = rows.length
-    ? `<tr>${th('name', 'name')}${th('modified', 'last modified')}${th('path', 'path')}<th></th></tr>` +
-      rows.slice(0, SHOW).map(r => { const p = esc(r.path), d = new Date(r.modified * 1000); return `<tr>
+    ? `<tr><th><input type="checkbox" data-tickall data-k="tickall" ${all ? 'checked' : ''} aria-label="Tick all ${num(shown.length)} files shown"></th>${th('name', 'name')}${th('modified', 'last modified')}${th('path', 'path')}<th></th></tr>` +
+      shown.map(r => { const p = esc(r.path), d = new Date(r.modified * 1000); return `<tr>
+        <td><input type="checkbox" data-tick="${p}" data-k="tick:${p}" ${ticked.has(r.path) ? 'checked' : ''} aria-label="Tick ${esc(r.name)} to add it to the results"></td>
         <td class="fname">${esc(r.name)}</td>
         <td class="nowrap" title="${esc(d.toISOString())}">${esc(d.toLocaleString())}</td>
-        <td class="path" tabindex="0" title="${p}" data-k="path:${p}">${p.split('/').join('/<wbr>').split('\\\\').join('\\\\<wbr>')}</td>
+        <td class="path" tabindex="0" title="${p}" data-k="path:${p}">${p}</td>
         <td class="nowrap"><button data-reveal="${p}" data-k="reveal:${p}" title="Show in ${where}" aria-label="Show ${esc(r.name)} in ${where}">Reveal</button>
           <button data-open="${p}" data-k="open:${p}" title="Open in MuseScore" aria-label="Open ${esc(r.name)} in MuseScore">Open</button>
           <button data-copy="${p}" data-k="copy:${p}" title="Copy the path" aria-label="Copy the path of ${esc(r.name)}">Copy</button></td></tr>`; }).join('') +
-      (rows.length > SHOW ? `<tr><td colspan="4" class="muted small">Showing ${num(SHOW)} of ${num(rows.length)}; filter to narrow.</td></tr>` : '')
+      (rows.length > SHOW ? `<tr><td colspan="5" class="muted small">Showing ${num(SHOW)} of ${num(rows.length)}; filter to narrow.</td></tr>` : '')
     : `<tr><td class="muted">${q && found.rows.length ? 'Nothing matches the filter.' : s.phase === 'spotlight' || s.phase === 'walk' ? 'Nothing found yet.' : 'No MusicXML files found.'}</td></tr>`;
   if (focusKey) [...table.querySelectorAll('[data-k]')].find(el => el.dataset.k === focusKey)?.focus();
 }
@@ -510,6 +523,41 @@ $('#search').onclick = async () => {
 };
 $('#stopsearch').onclick = async () => { await post('/api/search/stop', {}); pollSearch(); };
 $('#filter').oninput = renderFound;
+
+function showTicked() {
+  const n = ticked.size;
+  $('#addfound').disabled = !n;
+  $('#addfound').textContent = n ? `Add ${num(n)} ticked to results` : 'Add ticked to results';
+}
+
+$('#found').addEventListener('change', e => {
+  const t = e.target;
+  if (t.dataset.tick !== undefined) t.checked ? ticked.add(t.dataset.tick) : ticked.delete(t.dataset.tick);
+  if (t.dataset.tickall !== undefined) {
+    for (const r of shown) t.checked ? ticked.add(r.path) : ticked.delete(r.path);
+    return renderFound();
+  }
+  showTicked();
+});
+
+$('#addfound').onclick = async () => {
+  const paths = [...ticked];
+  $('#addfound').disabled = true;
+  $('#faction').textContent = `Adding ${num(paths.length)} to the results… (each is checked and rendered in MuseScore)`;
+  const res = await post('/api/found/add', {paths});
+  const text = await res.text();
+  if (res.ok) {
+    const a = JSON.parse(text);
+    const said = [a.added.length && `Added to the results: ${a.added.join(', ')}.`,
+                  a.already.length && `Already in the results: ${a.already.join(', ')}.`].filter(Boolean).join(' ');
+    $('#faction').innerHTML = esc(said) + a.errors.map(x => `<br><span class="error">${esc(x.error)}</span>`).join('');
+    ticked = new Set(a.errors.map(x => x.path));  // keep what failed ticked
+  } else {
+    $('#faction').innerHTML = `<span class="error">${esc(text)}</span>`;
+  }
+  renderFound();
+  refresh();
+};
 $('#found').addEventListener('click', async e => {
   const b = e.target.closest('button');
   if (!b) return;
@@ -637,6 +685,8 @@ def launch_found(action: str, path: str) -> None:
         cmd = ["xdg-open", str(Path(path).parent)]
     subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True)
+
+
 def import_upload(name: str, data: bytes) -> dict:
     """Save an uploaded .musicxml/.mxl to inputs/ and make it a result right away."""
     stem = nfc(Path(name).stem)
@@ -658,6 +708,41 @@ def import_upload(name: str, data: bytes) -> dict:
     upsert_result(row)
     append_review_rows([row])
     return row
+
+
+def result_stem(stem: str) -> str:
+    """A sample name check_name accepts: "merkurius-m22-33 (1)" -> "merkurius-m22-33-1"."""
+    stem = re.sub(r"-{2,}", "-", re.sub(r"\s*[^\w .-]+\s*", "-", nfc(stem)))
+    return stem.strip(" .-")[:100].rstrip(" .-") or "score"
+
+
+def add_found(paths: list[str]) -> dict:
+    """Copy search results into inputs/ and make each one a result, as if it had been uploaded. The
+    original is never touched. A name that is taken gets -2, -3, ...; a file that is already in inputs/
+    (same name, same bytes) isn't added twice."""
+    out: dict = {"added": [], "already": [], "errors": []}
+    for path in paths:
+        src = Path(path)
+        try:
+            if not SEARCH.found(path):
+                raise ValueError("it isn't in the search results any more; search again")
+            data = src.read_bytes()
+            ext = ".mxl" if src.suffix.lower() == ".mxl" else ".musicxml"  # a MusicXML .xml is kept as .musicxml
+            taken = {nfc(p.stem) for p in INPUTS.iterdir() if p.suffix.lower() in ALLOWED_EXTS}
+            taken |= {r["output_name"] for r in read_results()}
+            base, n = result_stem(src.stem), 1
+            while True:
+                stem = base if n == 1 else f"{base}-{n}"
+                if (INPUTS / f"{stem}{ext}").is_file() and (INPUTS / f"{stem}{ext}").read_bytes() == data:
+                    out["already"].append(stem)
+                    break
+                if stem not in taken:
+                    out["added"].append(import_upload(f"{stem}{ext}", data)["output_name"])
+                    break
+                n += 1
+        except (ValueError, OSError) as e:
+            out["errors"].append({"path": path, "error": f"{src.name}: {e}"})
+    return out
 
 
 def source_xml(kind: str, name: str) -> Path:
@@ -774,6 +859,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/search/stop":
                 SEARCH.stop()
                 return self.send(200, "ok")
+            if path == "/api/found/add":
+                return self.send_json(add_found(body["paths"]))
             if path in ("/api/found/reveal", "/api/found/open"):
                 launch_found(path.removeprefix("/api/found/"), body["path"])
                 return self.send(200, "ok")
