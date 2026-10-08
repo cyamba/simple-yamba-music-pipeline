@@ -771,6 +771,57 @@ def open_file(kind: str, name: str) -> dict:
     return {"mscz": str(open_in_musescore(source_xml(kind, name)).relative_to(ROOT))}
 
 
+def list_inputs() -> list[str]:
+    return sorted(p.name for p in INPUTS.iterdir() if p.suffix.lower() in ALLOWED_EXTS)
+
+
+def save_input(name: str, data: bytes) -> dict | None:
+    """Save an upload to inputs/. A .musicxml/.mxl becomes a result straight away and its row is returned;
+    an image or PDF waits for the batch."""
+    if not name or Path(name).name != name or Path(name).suffix.lower() not in ALLOWED_EXTS:
+        raise ValueError(f"only {', '.join(sorted(ALLOWED_EXTS))} files are accepted")
+    if Path(name).suffix.lower() in MUSICXML_EXTS:
+        return import_upload(name, data)
+    (INPUTS / name).write_bytes(data)
+    return None
+
+
+def delete_input(name: str) -> None:
+    path = INPUTS / Path(name).name
+    if not name or Path(name).suffix.lower() not in ALLOWED_EXTS or not path.is_file():
+        raise ValueError(f"no input called {name!r}")
+    path.unlink()
+
+
+def batch_command(only: str | None = None) -> list[str]:
+    """run_batch.py over every input, or only over one."""
+    return [sys.executable, str(Path(__file__).with_name("run_batch.py")), *(["--only", only] if only else [])]
+
+
+def set_order(order: list[str] | None = None, exclude: list[str] | None = None, name: str | None = None) -> dict:
+    """Save the order of the results, the ones left out of the full score, and its name."""
+    state = read_state()
+    state.update({k: v for k, v in (("order", order), ("exclude", exclude), ("name", name)) if v is not None})
+    write_state(state)
+    return state
+
+
+def rename_result(old: str, new: str) -> dict[str, str]:
+    """Rename a result and its files, keeping its place in the order. Returns {old name: new name}."""
+    sync()
+    names = rename_sample(ROOT, old, new)
+    state = read_state()
+    for key in ("order", "exclude"):
+        state[key] = [names.get(nfc(n), n) for n in state[key]]
+    write_state(state)
+    return names
+
+
+def rename_full_score(old: str, new: str) -> str:
+    sync()
+    return rename_score(SCORES, old, new)
+
+
 class Handler(BaseHTTPRequestHandler):
     def send(self, code: int, body: bytes | str, ctype: str = "text/plain; charset=utf-8") -> None:
         data = body.encode() if isinstance(body, str) else body
@@ -796,8 +847,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             return self.send(200, PAGE, "text/html; charset=utf-8")
         if path == "/api/state":
-            inputs = sorted(p.name for p in INPUTS.iterdir() if p.suffix.lower() in ALLOWED_EXTS)
-            return self.send_json({"inputs": inputs, "results": read_results(),
+            return self.send_json({"inputs": list_inputs(), "results": read_results(),
                                    "full": {"name": read_state()["name"]}, "scores": read_scores()})
         if path == "/api/search":
             since = parse_qs(urlparse(self.path).query).get("since", ["0"])[0]
@@ -812,45 +862,30 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         if path == "/upload":
-            name = self.input_name()
-            if not name:
-                return self.send(400, f"only {', '.join(sorted(ALLOWED_EXTS))} files are accepted")
             data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            if Path(name).suffix.lower() in MUSICXML_EXTS:
-                try:
-                    return self.send_json(import_upload(name, data))
-                except (ValueError, OSError) as e:
-                    return self.send(400, str(e))
-            (INPUTS / name).write_bytes(data)
-            return self.send(200, "ok")
+            try:
+                row = save_input(self.input_name() or "", data)
+            except (ValueError, OSError) as e:
+                return self.send(400, str(e))
+            return self.send_json(row) if row else self.send(200, "ok")
         if path == "/api/run":
-            p = subprocess.run([sys.executable, str(ROOT / "scripts" / "run_batch.py")],
-                               capture_output=True, text=True, cwd=ROOT)
+            p = subprocess.run(batch_command(), capture_output=True, text=True, cwd=ROOT)
             return self.send(200, p.stdout + (f"\n{p.stderr}" if p.returncode else ""))
         try:
             body = self.json_body()
             if path == "/api/order":
-                state = read_state()
-                state.update({k: body[k] for k in ("order", "exclude", "name") if k in body})
-                write_state(state)
+                set_order(**{k: body[k] for k in ("order", "exclude", "name") if k in body})
                 return self.send(200, "ok")
             if path == "/api/sync":
                 return self.send_json({"synced": sync()})
             if path == "/api/open":
                 return self.send_json(open_file(body["kind"], body["name"]))
             if path == "/api/rename":
-                sync()
-                names = rename_sample(ROOT, body["old"], body["new"])
-                state = read_state()
-                for key in ("order", "exclude"):
-                    state[key] = [names.get(nfc(n), n) for n in state[key]]
-                write_state(state)
-                return self.send_json(names)
+                return self.send_json(rename_result(body["old"], body["new"]))
             if path == "/api/combine":
                 return self.send_json(combine(body.get("name", ""), body.get("samples", [])))
             if path == "/api/rename-score":
-                sync()
-                return self.send_json({"name": rename_score(SCORES, body["old"], body["new"])})
+                return self.send_json({"name": rename_full_score(body["old"], body["new"])})
             if path == "/api/export":
                 return self.send_json(export_file(body["kind"], body["name"], body["format"]))
             if path == "/api/search":
@@ -869,10 +904,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send(404, "not found")
 
     def do_DELETE(self) -> None:
-        name = self.input_name()
-        if urlparse(self.path).path == "/api/input" and name and (INPUTS / name).is_file():
-            (INPUTS / name).unlink()
-            return self.send(200, "ok")
+        if urlparse(self.path).path == "/api/input":
+            try:
+                delete_input(self.input_name() or "")
+                return self.send(200, "ok")
+            except ValueError:
+                pass
         self.send(404, "not found")
 
 
