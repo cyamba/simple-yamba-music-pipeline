@@ -5,7 +5,7 @@ UI does: add scores, transcribe them with HOMR, read the music, put the results 
 a full score, export PDF or MIDI, and open them in MuseScore Studio for editing.
 
 Usage:  uv run python scripts/mcp_server.py                      stdio (Claude Code, Claude Desktop, Codex CLI)
-        uv run python scripts/mcp_server.py --transport streamable-http [--port 8777]
+        uv run python scripts/mcp_server.py --transport streamable-http [--port 8790]
                                                                  HTTP (ChatGPT, claude.ai; behind a tunnel)
         uv run python scripts/mcp_server.py --list-tools
 
@@ -52,7 +52,7 @@ from find_musicxml import Search
 from samples import nfc
 
 SERVER_NAME = "yamba-music"
-PORT = 8777  # the UI has 8765
+PORT = 8790  # clear of the UI's 8765 and the ports it is often run on
 MAX_BODY = 64 * 1024 * 1024  # base64 uploads of a scanned PDF
 MAX_DOWNLOAD = 50 * 1024 * 1024
 ERRORS = (ValueError, KeyError, OSError, ET.ParseError, subprocess.SubprocessError, binascii.Error)
@@ -133,6 +133,10 @@ class Jobs:
         if job is None:
             raise ValueError(f"no transcription job {job_id}" if job_id else "no transcription has been started")
         return job
+
+    def started(self) -> bool:
+        with self._lock:
+            return bool(self._jobs)
 
     def running(self) -> str | None:
         with self._lock:
@@ -236,6 +240,9 @@ def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer
             raise ValueError(f"no full score called {name!r}; full scores: {', '.join(s['name'] for s in scores)}")
         return score
 
+    def find(kind: str, name: str) -> dict:
+        return find_result(name) if kind == "result" else find_score(name)
+
     def job_report(job: Job) -> dict:
         done = job.done.is_set()
         out = {"job_id": job.id, "input": job.input or "all inputs",
@@ -295,18 +302,19 @@ def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer
 
     @tool(READ)
     def search(query: Annotated[str, Field(description="words to look for; empty lists everything")]) -> dict[str, Any]:
-        """Search the results and full scores by name, source file and title. Returns ids for fetch."""
+        """Search the results and full scores by name and source files; the best matches (most words found)
+        come first. Returns ids for fetch."""
         words = nfc(query).lower().split()
-        hits = []
-        for r in ui.read_results():
-            if r["output"] and all(w in f"{r['output_name']} {r['source']}".lower() for w in words):
-                hits.append({"id": f"result:{r['output_name']}", "title": f"{r['output_name']} (result, {r['status']})",
-                             "url": file_ref(r["output"]).get("url", str(ui.ROOT / r["output"]))})
-        for s in ui.read_scores():
-            if all(w in f"{s['name']} {' '.join(s['sources'])}".lower() for w in words):
-                hits.append({"id": f"score:{s['name']}", "title": f"{s['name']} (full score of {len(s['sources'])})",
-                             "url": file_ref(s["xml"]).get("url", str(ui.ROOT / s["xml"]))})
-        return {"results": hits}
+        found = [(f"{r['output_name']} {r['source']} result", {
+                     "id": f"result:{r['output_name']}", "title": f"{r['output_name']} (result, {r['status']})",
+                     "url": file_ref(r["output"]).get("url", str(ui.ROOT / r["output"]))})
+                 for r in ui.read_results() if r["output"]]
+        found += [(f"{s['name']} {' '.join(s['sources'])} full score", {
+                      "id": f"score:{s['name']}", "title": f"{s['name']} (full score of {len(s['sources'])} results)",
+                      "url": file_ref(s["xml"]).get("url", str(ui.ROOT / s["xml"]))})
+                  for s in ui.read_scores()]
+        ranked = [(sum(w in text.lower() for w in words), hit) for text, hit in found]
+        return {"results": [hit for n, hit in sorted(ranked, key=lambda x: -x[0]) if n or not words]}
 
     @tool(READ)
     def fetch(id: Annotated[str, Field(description="an id from search, e.g. 'result:merkurius-m01-10'")]) -> dict[str, Any]:
@@ -392,6 +400,8 @@ def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer
         wait_seconds: Annotated[int, Field(description="wait up to this long (max 50) for the job to finish")] = 0,
     ) -> dict[str, Any]:
         """A transcription job's state (running, done, failed), its log so far and, once finished, its results."""
+        if job_id is None and not jobs.started():
+            return {"state": "none", "note": "no transcription has been started; use transcribe"}
         job = jobs.get(job_id)
         job.done.wait(max(0, min(wait_seconds, 50)))
         return job_report(job)
@@ -510,6 +520,7 @@ def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer
     ) -> dict[str, Any]:
         """Export a result or full score with MuseScore to exports/<name>.pdf or .mid. Edits saved in MuseScore
         are brought in first."""
+        find(kind, name)
         return {"file": file_ref(ui.export_file(kind, name, format)["file"])}
 
     @tool(WRITE)
@@ -519,6 +530,7 @@ def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer
     ) -> dict[str, Any]:
         """Open a result or full score in MuseScore Studio on the user's Mac, for them to edit by hand. When they
         save, the edit comes back into the pipeline (or call sync_musescore_edits)."""
+        find(kind, name)
         return {"opened": file_ref(ui.open_file(kind, name)["mscz"])}
 
     @tool(WRITE)
@@ -539,7 +551,7 @@ def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer
 
     @server.custom_route("/healthz", methods=["GET"])
     async def healthz(request):
-        return PlainTextResponse("ok")
+        return PlainTextResponse(f"{SERVER_NAME} ok")
 
     return server
 

@@ -18,7 +18,8 @@ completed/ finished pieces: completed/<piece>/ holds the full score (.musicxml +
 scores/    full scores concatenated from results in the UI (<name>.musicxml + MuseScore PDF,
            and <name>.mscz once opened in MuseScore from the UI)
 edits/     <name>.mscz: results opened in MuseScore from the UI, where your edits are saved
-scripts/   run_batch.py, postprocess.py, score_check.py, combine.py, samples.py, export.py, edits.py, find_musicxml.py, ui.py
+scripts/   run_batch.py, postprocess.py, score_check.py, combine.py, samples.py, export.py, edits.py, find_musicxml.py, ui.py,
+           mcp_server.py + mcp_public.sh (the pipeline as an MCP server, see docs/MCP.md)
 tests/     uv run pytest
 ```
 
@@ -39,6 +40,7 @@ The first run downloads HOMR's models, which takes a while. Everything runs loca
 
 ```bash
 uv run python scripts/run_batch.py            # optional: --timeout 900 (seconds per page)
+uv run python scripts/run_batch.py --only page.jpg   # just this input; the other results are kept
 ```
 
 For each input, the script converts PDFs to 300-dpi PNG pages, runs `homr <image>` on each page,
@@ -94,6 +96,15 @@ the disk adds the files Spotlight doesn't index. That walk takes a few minutes t
 Folders the terminal can't read are counted, not searched (on macOS, give it Full Disk Access to
 include them). The same from the command line:
 `uv run python scripts/find_musicxml.py [FOLDER ...]`
+
+### Or let an agent drive it (MCP)
+
+`scripts/mcp_server.py` exposes the same actions as the UI as an [MCP](https://modelcontextprotocol.io)
+server, so Claude, ChatGPT or any other MCP client can work the pipeline toward a goal ("make a full
+score of the Merkurius pages and give me a MIDI"). It speaks stdio for local apps (Claude Code picks up
+the committed `.mcp.json`; Claude Desktop, Codex) and streamable HTTP for remote connectors (ChatGPT,
+claude.ai), which `scripts/mcp_public.sh` puts behind a temporary HTTPS tunnel. Setup for each client,
+the tools, and example goals: [docs/MCP.md](docs/MCP.md).
 
 ## Post-processing
 

@@ -85,6 +85,7 @@ def test_an_agent_can_add_read_arrange_combine_and_rename(root):
 
     [hit] = call(server, "search", query="walt")["results"]
     assert hit["id"] == "result:waltz"
+    assert [h["id"] for h in call(server, "search", query="the intro result")["results"]] == ["result:intro", "result:waltz"]
     assert "m2 4/4: staff 1: C5:1 | staff 2: C4:1" in call(server, "fetch", id=hit["id"])["text"]
 
     arranged = call(server, "arrange_full_score", order=["intro"], name="Suite")
@@ -93,6 +94,7 @@ def test_an_agent_can_add_read_arrange_combine_and_rename(root):
     assert (combined["name"], combined["measures"], combined["results"]) == ("Suite", 3, ["intro", "waltz"])
     assert (root / "scores/Suite.musicxml").exists()
     assert call(server, "get_music", kind="score", name="Suite")["measures"] == 3
+    assert call(server, "search", query="suite score")["results"][0]["id"] == "score:Suite"
 
     assert call(server, "rename", kind="result", old="waltz", new="valse")["renamed"] == {"waltz": "valse"}
     assert [r["name"] for r in call(server, "get_library")["results"]] == ["intro", "valse"]  # keeps its place
@@ -112,6 +114,8 @@ def test_mistakes_come_back_as_messages_the_agent_can_act_on(root):
     assert "'3-8' or 'all'" in error(server, "get_music", kind="result", name="waltz", measures="one")
     assert "no input called" in error(server, "transcribe", input_name="nope.png")
     assert "either content_base64 or url" in error(server, "add_input", name="a.png")
+    assert "no full score called 'nope'; full scores: " in error(server, "export", kind="score", name="nope", format="pdf")
+    assert call(server, "get_job")["state"] == "none"
 
 
 def test_add_input_saves_images_for_the_batch_and_imports_musicxml(root):
@@ -167,11 +171,11 @@ def test_http_serves_downloads_behind_the_token_and_checks_the_host(root):
         "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}}
     headers = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
     with TestClient(mcp_server.http_app(server, token="s3cret", hosts=["abc.example"]),
-                    base_url="http://127.0.0.1:8777") as client:
+                    base_url="http://127.0.0.1:8790") as client:
         assert client.get("/s3cret/files/outputs/waltz.musicxml").text == score(WHOLE)
         assert client.get("/files/outputs/waltz.musicxml").status_code == 404
         assert client.get("/s3cret/files/inputs/%2e%2e/secret.txt").status_code == 404
-        assert client.get("/healthz").text == "ok"
+        assert client.get("/healthz").text == "yamba-music ok"
         assert client.post("/s3cret/mcp", json=init, headers=headers).status_code == 200
         assert client.post("/s3cret/mcp", json=init, headers={**headers, "Host": "abc.example"}).status_code == 200
         assert client.post("/s3cret/mcp", json=init, headers={**headers, "Host": "evil.example"}).status_code == 421
