@@ -3,6 +3,7 @@ rename them, concatenate them into a full score and export results or full score
 
 An uploaded .musicxml/.mxl (a score you already have) becomes a result straight away, without HOMR.
 Edit opens a result or full score in MuseScore Studio; what you save there comes back (see edits.py).
+Piano roll opens one in the piano-roll editor (/roll, see roll_api.py), where you can also start from scratch.
 It can also find every MusicXML file on the computer and add the ones you pick to the results.
 
 Usage:  uv run python scripts/ui.py [--port 8765]   then open http://127.0.0.1:8765
@@ -31,12 +32,13 @@ from samples import check_name, nfc, rename_sample, rename_score
 ALLOWED_EXTS = SOURCE_EXTS
 STATE = REVIEW / "full-score.json"  # order of the results, which go into the full score, its name
 SEARCH = Search()
-SERVABLE_DIRS = ("inputs", "outputs", "logs", "review", "scores", "exports")
+SERVABLE_DIRS = ("inputs", "outputs", "logs", "review", "scores", "exports", "rolls")
 CONTENT_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
                  ".jpeg": "image/jpeg", ".musicxml": "application/vnd.recordare.musicxml+xml",
                  ".mxl": "application/vnd.recordare.musicxml", ".mid": "audio/midi",
                  ".log": "text/plain; charset=utf-8", ".csv": "text/csv; charset=utf-8",
-                 ".md": "text/plain; charset=utf-8"}
+                 ".md": "text/plain; charset=utf-8", ".html": "text/html; charset=utf-8",
+                 ".json": "application/json"}
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -138,6 +140,13 @@ PAGE = """<!doctype html>
 <table id="scores"></table>
 <p id="sstatus" class="small" role="status"></p>
 
+<h2>Piano rolls</h2>
+<p class="muted small">Edit a result or full score note by note (Piano roll, next to it above), or write a new score
+  from scratch. Saving keeps the roll and its MIDI in rolls/; To result turns it into MusicXML among the results, so it
+  can go into a full score.</p>
+<table id="rolls"></table>
+<p><button id="newroll" type="button">New piano roll</button> <span id="pstatus" class="small" role="status"></span></p>
+
 <h2>MusicXML on this computer</h2>
 <p class="muted small">Finds .musicxml, .mxl and MusicXML .xml files on every drive. Hover over a path (or tab to it) to see all of it.
   Tick files and add them to the results to concatenate them with the rest; they are copied into inputs/, the originals stay as they are.</p>
@@ -157,10 +166,11 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const link = (p, label) => p ? `<a href="/files/${encodeURI(p)}" target="_blank">${label}</a>` : '';
 const post = (url, body) => fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-const ACTIONS = {edit: ['Edit', 'Open {} in MuseScore Studio'], pdf: ['PDF', 'Export {} to PDF'], midi: ['MIDI', 'Export {} to MIDI']};
+const ACTIONS = {edit: ['Edit', 'Open {} in MuseScore Studio'], roll: ['Piano roll', 'Open {} in the piano roll'],
+                 pdf: ['PDF', 'Export {} to PDF'], midi: ['MIDI', 'Export {} to MIDI']};
 const actionButtons = name => Object.entries(ACTIONS).map(([act, [label, aria]]) =>
   `<button data-act="${act}" aria-label="${esc(aria.replace('{}', name))}">${label}</button>`).join(' ');
-let state = {inputs: [], results: [], full: {name: ''}, scores: []};
+let state = {inputs: [], results: [], full: {name: ''}, scores: [], rolls: []};
 
 async function refresh() {
   state = await (await fetch('/api/state')).json();
@@ -204,6 +214,17 @@ function render() {
         <td class="muted small">${esc(s.sources.map(x => x.replace(/\\.musicxml$/, '')).join(' → '))}</td>
         <td class="nowrap">${link(s.xml, 'musicxml')} ${link(s.pdf, 'render')}</td>
         <td class="nowrap">${actionButtons(s.name)}</td></tr>`).join('')
+    : '<tr><td class="muted">None yet.</td></tr>';
+  $('#rolls').innerHTML = state.rolls.length
+    ? '<tr><th>piano roll</th><th>measures</th><th>parts</th><th>saved</th><th>files</th><th>results</th><th></th></tr>' +
+      state.rolls.map((r, i) => `<tr data-r="${i}">
+        <td><a href="/roll?name=${encodeURIComponent(r.name)}" target="_blank">${esc(r.name)}</a>
+          <span class="muted small">${esc(r.title && r.title !== r.name ? r.title : '')}</span></td>
+        <td>${esc(r.measures)}</td><td class="small">${esc((r.parts || []).join(', '))}</td>
+        <td class="small nowrap">${esc(r.modified)} · rev ${esc(r.revision)}</td>
+        <td class="nowrap">${link(r.midi, 'midi')} ${link(r.roll, 'roll')}</td>
+        <td class="small">${esc((r.results || []).join(', '))}</td>
+        <td class="nowrap"><button data-toresult="${i}" aria-label="Add ${esc(r.name)} to the results as MusicXML">To result</button></td></tr>`).join('')
     : '<tr><td class="muted">None yet.</td></tr>';
 }
 
@@ -291,10 +312,45 @@ async function openInMuseScore(kind, name, button, statusEl) {
   button.disabled = false;
 }
 
+// The piano roll of a result or full score: the one made before, or a new one read from its MusicXML.
+async function openRoll(kind, name, button, statusEl) {
+  const open = n => window.open('/roll?name=' + encodeURIComponent(n), '_blank');
+  if (state.rolls.some(r => r.name === name)) return open(name);
+  button.disabled = true;
+  statusEl.textContent = `Reading ${name} into a piano roll…`;
+  const res = await post('/api/roll/create', {name, source: kind, source_name: name});
+  const text = await res.text();
+  button.disabled = false;
+  if (!res.ok) { statusEl.innerHTML = `<span class="error">${esc(text)}</span>`; return; }
+  const {info} = JSON.parse(text);
+  const lost = Object.entries(info.dropped || {}).map(([k, n]) => `${n} ${k} note(s)`);
+  if (info.snapped) lost.push(`${info.snapped} note(s) snapped to the grid`);
+  statusEl.textContent = `Made the piano roll ${name}` + (lost.length ? ` (${lost.join(', ')}).` : '.');
+  open(name);
+  refresh();
+}
+
 function act(kind, name, button, statusEl) {
   if (button.dataset.act === 'edit') openInMuseScore(kind, name, button, statusEl);
+  else if (button.dataset.act === 'roll') openRoll(kind, name, button, statusEl);
   else exportFile(kind, name, button.dataset.act, button, statusEl);
 }
+
+$('#newroll').onclick = () => window.open('/roll', '_blank');
+$('#rolls').addEventListener('click', async e => {
+  const i = e.target.dataset.toresult;
+  if (i === undefined) return;
+  const r = state.rolls[+i];
+  e.target.disabled = true;
+  $('#pstatus').textContent = `Writing ${r.name} as MusicXML…`;
+  const res = await post('/api/roll/to-result', {name: r.name});
+  const text = await res.text();
+  e.target.disabled = false;
+  if (!res.ok) { $('#pstatus').innerHTML = `<span class="error">${esc(text)}</span>`; return; }
+  const out = JSON.parse(text);
+  $('#pstatus').textContent = `Added the result ${out.result}. ${out.warnings.join(' ')}`;
+  refresh();
+});
 
 // Bring back what was saved in MuseScore: when this page gets focus again, or on request.
 let syncing = false;
@@ -710,6 +766,16 @@ def import_upload(name: str, data: bytes) -> dict:
     return row
 
 
+def import_result(name: str, xml: bytes, replace: bool = False) -> dict:
+    """Add MusicXML as the result `name`; a name already used by a result or an input is refused unless
+    replace."""
+    filename = name if Path(name).suffix.lower() in MUSICXML_EXTS else f"{name}.musicxml"
+    taken = {r["output_name"] for r in read_results()} | {nfc(Path(n).stem) for n in list_inputs()}
+    if not replace and nfc(Path(filename).stem) in taken:
+        raise ValueError(f"{Path(filename).stem} already exists; pick another name or pass replace=true")
+    return import_upload(filename, xml)
+
+
 def result_stem(stem: str) -> str:
     """A sample name check_name accepts: "merkurius-m22-33 (1)" -> "merkurius-m22-33-1"."""
     stem = re.sub(r"-{2,}", "-", re.sub(r"\s*[^\w .-]+\s*", "-", nfc(stem)))
@@ -771,6 +837,57 @@ def open_file(kind: str, name: str) -> dict:
     return {"mscz": str(open_in_musescore(source_xml(kind, name)).relative_to(ROOT))}
 
 
+def list_inputs() -> list[str]:
+    return sorted(p.name for p in INPUTS.iterdir() if p.suffix.lower() in ALLOWED_EXTS)
+
+
+def save_input(name: str, data: bytes) -> dict | None:
+    """Save an upload to inputs/. A .musicxml/.mxl becomes a result straight away and its row is returned;
+    an image or PDF waits for the batch."""
+    if not name or Path(name).name != name or Path(name).suffix.lower() not in ALLOWED_EXTS:
+        raise ValueError(f"only {', '.join(sorted(ALLOWED_EXTS))} files are accepted")
+    if Path(name).suffix.lower() in MUSICXML_EXTS:
+        return import_upload(name, data)
+    (INPUTS / name).write_bytes(data)
+    return None
+
+
+def delete_input(name: str) -> None:
+    path = INPUTS / Path(name).name
+    if not name or Path(name).suffix.lower() not in ALLOWED_EXTS or not path.is_file():
+        raise ValueError(f"no input called {name!r}")
+    path.unlink()
+
+
+def batch_command(only: str | None = None) -> list[str]:
+    """run_batch.py over every input, or only over one."""
+    return [sys.executable, str(Path(__file__).with_name("run_batch.py")), *(["--only", only] if only else [])]
+
+
+def set_order(order: list[str] | None = None, exclude: list[str] | None = None, name: str | None = None) -> dict:
+    """Save the order of the results, the ones left out of the full score, and its name."""
+    state = read_state()
+    state.update({k: v for k, v in (("order", order), ("exclude", exclude), ("name", name)) if v is not None})
+    write_state(state)
+    return state
+
+
+def rename_result(old: str, new: str) -> dict[str, str]:
+    """Rename a result and its files, keeping its place in the order. Returns {old name: new name}."""
+    sync()
+    names = rename_sample(ROOT, old, new)
+    state = read_state()
+    for key in ("order", "exclude"):
+        state[key] = [names.get(nfc(n), n) for n in state[key]]
+    write_state(state)
+    return names
+
+
+def rename_full_score(old: str, new: str) -> str:
+    sync()
+    return rename_score(SCORES, old, new)
+
+
 class Handler(BaseHTTPRequestHandler):
     def send(self, code: int, body: bytes | str, ctype: str = "text/plain; charset=utf-8") -> None:
         data = body.encode() if isinstance(body, str) else body
@@ -791,14 +908,26 @@ class Handler(BaseHTTPRequestHandler):
     def json_body(self) -> dict:
         return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
 
+    def roll_api(self, method: str) -> None:
+        """The piano-roll editor page and its API (roll_api.py)."""
+        import roll_api  # noqa: PLC0415 - it imports this module
+        url = urlparse(self.path)
+        body = self.rfile.read(int(self.headers.get("Content-Length", 0))) if method == "POST" else b""
+        code, ctype, data = roll_api.handle(method, unquote(url.path), parse_qs(url.query), dict(self.headers.items()),
+                                            body)
+        self.send(code, data, ctype)
+
     def do_GET(self) -> None:
         path = unquote(urlparse(self.path).path)
         if path == "/":
             return self.send(200, PAGE, "text/html; charset=utf-8")
         if path == "/api/state":
-            inputs = sorted(p.name for p in INPUTS.iterdir() if p.suffix.lower() in ALLOWED_EXTS)
-            return self.send_json({"inputs": inputs, "results": read_results(),
-                                   "full": {"name": read_state()["name"]}, "scores": read_scores()})
+            import roll_api  # noqa: PLC0415 - it imports this module
+            return self.send_json({"inputs": list_inputs(), "results": read_results(),
+                                   "full": {"name": read_state()["name"]}, "scores": read_scores(),
+                                   "rolls": roll_api.list_rolls()})
+        if path == "/roll" or path.startswith("/api/roll/"):
+            return self.roll_api("GET")
         if path == "/api/search":
             since = parse_qs(urlparse(self.path).query).get("since", ["0"])[0]
             return self.send_json(SEARCH.snapshot(int(since) if since.isdigit() else 0))
@@ -811,46 +940,33 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path.startswith("/api/roll/"):
+            return self.roll_api("POST")
         if path == "/upload":
-            name = self.input_name()
-            if not name:
-                return self.send(400, f"only {', '.join(sorted(ALLOWED_EXTS))} files are accepted")
             data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            if Path(name).suffix.lower() in MUSICXML_EXTS:
-                try:
-                    return self.send_json(import_upload(name, data))
-                except (ValueError, OSError) as e:
-                    return self.send(400, str(e))
-            (INPUTS / name).write_bytes(data)
-            return self.send(200, "ok")
+            try:
+                row = save_input(self.input_name() or "", data)
+            except (ValueError, OSError) as e:
+                return self.send(400, str(e))
+            return self.send_json(row) if row else self.send(200, "ok")
         if path == "/api/run":
-            p = subprocess.run([sys.executable, str(ROOT / "scripts" / "run_batch.py")],
-                               capture_output=True, text=True, cwd=ROOT)
+            p = subprocess.run(batch_command(), capture_output=True, text=True, cwd=ROOT)
             return self.send(200, p.stdout + (f"\n{p.stderr}" if p.returncode else ""))
         try:
             body = self.json_body()
             if path == "/api/order":
-                state = read_state()
-                state.update({k: body[k] for k in ("order", "exclude", "name") if k in body})
-                write_state(state)
+                set_order(**{k: body[k] for k in ("order", "exclude", "name") if k in body})
                 return self.send(200, "ok")
             if path == "/api/sync":
                 return self.send_json({"synced": sync()})
             if path == "/api/open":
                 return self.send_json(open_file(body["kind"], body["name"]))
             if path == "/api/rename":
-                sync()
-                names = rename_sample(ROOT, body["old"], body["new"])
-                state = read_state()
-                for key in ("order", "exclude"):
-                    state[key] = [names.get(nfc(n), n) for n in state[key]]
-                write_state(state)
-                return self.send_json(names)
+                return self.send_json(rename_result(body["old"], body["new"]))
             if path == "/api/combine":
                 return self.send_json(combine(body.get("name", ""), body.get("samples", [])))
             if path == "/api/rename-score":
-                sync()
-                return self.send_json({"name": rename_score(SCORES, body["old"], body["new"])})
+                return self.send_json({"name": rename_full_score(body["old"], body["new"])})
             if path == "/api/export":
                 return self.send_json(export_file(body["kind"], body["name"], body["format"]))
             if path == "/api/search":
@@ -869,10 +985,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send(404, "not found")
 
     def do_DELETE(self) -> None:
-        name = self.input_name()
-        if urlparse(self.path).path == "/api/input" and name and (INPUTS / name).is_file():
-            (INPUTS / name).unlink()
-            return self.send(200, "ok")
+        if urlparse(self.path).path == "/api/input":
+            try:
+                delete_input(self.input_name() or "")
+                return self.send(200, "ok")
+            except ValueError:
+                pass
         self.send(404, "not found")
 
 

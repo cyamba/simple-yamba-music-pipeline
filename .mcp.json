@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "yamba-music": {
+      "command": "uv",
+      "args": ["run", "--directory", "${CLAUDE_PROJECT_DIR:-.}", "python", "scripts/mcp_server.py"]
+    }
+  }
+}

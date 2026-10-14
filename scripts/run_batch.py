@@ -1,6 +1,6 @@
 """Run HOMR over every score in inputs/ and record what happened.
 
-Usage:  uv run python scripts/run_batch.py [--timeout SECONDS]
+Usage:  uv run python scripts/run_batch.py [--timeout SECONDS] [--only FILE]
 
 inputs/<name>.(png|jpg|jpeg|pdf)
   -> work/<name>/<output-name>.homr.musicxml  (HOMR's own output, kept for comparison)
@@ -186,6 +186,15 @@ def upsert_result(row: dict) -> None:
     write_results([r for i, r in enumerate(rows) if i not in same[1:]])
 
 
+# On macOS 27, MuseScore 4.7.5's command line often aborts while shutting down, after it has
+# written its output (the files match those of clean runs).
+ABORTED = (-6, 134)  # SIGABRT, as a signal or as a shell exit status
+
+
+def wrote(path: Path, since: float) -> bool:
+    return path.is_file() and path.stat().st_size > 0 and path.stat().st_mtime >= since
+
+
 def musescore_convert(mscore: str, src: Path, dst: Path) -> str:
     """Have MuseScore write src as dst, in the format of dst's extension. Returns "yes" or "no (reason)"."""
     started = time.time() - 1
@@ -193,7 +202,7 @@ def musescore_convert(mscore: str, src: Path, dst: Path) -> str:
         p = subprocess.run([mscore, "-o", str(dst), str(src)], capture_output=True, text=True, timeout=180)
     except subprocess.TimeoutExpired:
         return "no (timeout)"
-    if p.returncode == 0:
+    if p.returncode == 0 or (p.returncode in ABORTED and wrote(dst, started)):
         return "yes"
     logged = str(src.relative_to(ROOT)) if src.is_relative_to(ROOT) else str(src)
     return f"no (exit {p.returncode}{': ' + reason if (reason := musescore_load_error(logged, started)) else ''})"
@@ -266,14 +275,46 @@ def append_review_rows(rows: list[dict]) -> None:
     review.write_text("\n".join(lines[:end] + new + lines[end:]) + "\n")
 
 
+def process_source(src: Path, mscore: str | None, timeout: int) -> list[dict]:
+    """The result rows for one input: an imported MusicXML file, or HOMR's output for each page."""
+    if src.suffix.lower() in MUSICXML_EXTS:
+        print(f"[import] {src.stem} ...", flush=True)
+        try:
+            return [import_musicxml(src, mscore)]
+        except (ValueError, OSError) as e:
+            return [dict(source=src.name, output_name=src.stem, status=f"import failed ({e})",
+                         seconds=0, output="", musescore="skipped", log="", fixes="")]
+    try:
+        pages = prepare_pages(src)
+    except Exception as e:  # noqa: BLE001 - record and move on
+        return [dict(source=src.name, output_name=src.stem, status=f"prep failed ({e})",
+                     seconds=0, output="", musescore="skipped", log="", fixes="")]
+    rows = []
+    for name, image in pages:
+        print(f"[homr] {name} ...", flush=True)
+        status, seconds, raw = run_homr(name, image, timeout)
+        xml, fixes = fix_output(name, raw) if raw else ("", "")
+        ms = check_musescore(mscore, xml, name)
+        print(f"        {status} in {seconds}s  musescore={ms}  fixes: {fixes or '-'}", flush=True)
+        rows.append(dict(source=src.name, output_name=name, status=status, seconds=seconds,
+                         output=xml, musescore=ms, log=f"logs/{name}.log", fixes=fixes))
+    return rows
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--timeout", type=int, default=900, help="seconds per page (default 900)")
+    ap.add_argument("--only", metavar="FILE", help="only this file in inputs/; the other results are kept")
     args = ap.parse_args()
 
     for d in (OUTPUTS, LOGS, WORK, REVIEW):
         d.mkdir(exist_ok=True)
     sources = sorted(p for p in INPUTS.iterdir() if p.suffix.lower() in SOURCE_EXTS)
+    if args.only:
+        nfc = lambda s: unicodedata.normalize("NFC", s)  # noqa: E731
+        sources = [p for p in sources if nfc(p.name) == nfc(Path(args.only).name)]
+        if not sources:
+            sys.exit(f"No {args.only} in inputs/")
     if not sources:
         sys.exit("No images, PDFs or MusicXML files in inputs/")
     mscore = mscore_bin()
@@ -281,36 +322,16 @@ def main() -> None:
     edits.sync(mscore)  # edits saved in MuseScore but not brought back yet
     edited = {r["output_name"] for r in read_result_rows() if r["status"] == "edited"}
 
-    rows: list[dict] = []
-    for src in sources:
-        if src.suffix.lower() in MUSICXML_EXTS:
-            print(f"[import] {src.stem} ...", flush=True)
-            try:
-                rows.append(import_musicxml(src, mscore))
-            except (ValueError, OSError) as e:
-                rows.append(dict(source=src.name, output_name=src.stem, status=f"import failed ({e})",
-                                 seconds=0, output="", musescore="skipped", log="", fixes=""))
-            continue
-        try:
-            pages = prepare_pages(src)
-        except Exception as e:  # noqa: BLE001 - record and move on
-            rows.append(dict(source=src.name, output_name=src.stem, status=f"prep failed ({e})",
-                             seconds=0, output="", musescore="skipped", log="", fixes=""))
-            continue
-        for name, image in pages:
-            print(f"[homr] {name} ...", flush=True)
-            status, seconds, raw = run_homr(name, image, args.timeout)
-            xml, fixes = fix_output(name, raw) if raw else ("", "")
-            ms = check_musescore(mscore, xml, name)
-            print(f"        {status} in {seconds}s  musescore={ms}  fixes: {fixes or '-'}", flush=True)
-            rows.append(dict(source=src.name, output_name=name, status=status, seconds=seconds,
-                             output=xml, musescore=ms, log=f"logs/{name}.log", fixes=fixes))
-
+    rows = [row for src in sources for row in process_source(src, mscore, args.timeout)]
     for i, row in enumerate(rows):  # an edit made in MuseScore wins over the new HOMR output
         if mscore and row["output_name"] in edited and (edits.EDITS / f"{row['output_name']}.mscz").exists():
             print(f"[edit] {row['output_name']}: keeping edits/{row['output_name']}.mscz", flush=True)
             rows[i] = edits.apply_edit(row, mscore)
-    write_results(rows)
+    if args.only:
+        for row in rows:
+            upsert_result(row)
+    else:
+        write_results(rows)
     write_environment(mscore, args.timeout)
     append_review_rows(rows)
 
