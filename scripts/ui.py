@@ -3,6 +3,7 @@ rename them, concatenate them into a full score and export results or full score
 
 An uploaded .musicxml/.mxl (a score you already have) becomes a result straight away, without HOMR.
 Edit opens a result or full score in MuseScore Studio; what you save there comes back (see edits.py).
+Piano roll opens one in the piano-roll editor (/roll, see roll_api.py), where you can also start from scratch.
 It can also find every MusicXML file on the computer and add the ones you pick to the results.
 
 Usage:  uv run python scripts/ui.py [--port 8765]   then open http://127.0.0.1:8765
@@ -31,12 +32,13 @@ from samples import check_name, nfc, rename_sample, rename_score
 ALLOWED_EXTS = SOURCE_EXTS
 STATE = REVIEW / "full-score.json"  # order of the results, which go into the full score, its name
 SEARCH = Search()
-SERVABLE_DIRS = ("inputs", "outputs", "logs", "review", "scores", "exports")
+SERVABLE_DIRS = ("inputs", "outputs", "logs", "review", "scores", "exports", "rolls")
 CONTENT_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
                  ".jpeg": "image/jpeg", ".musicxml": "application/vnd.recordare.musicxml+xml",
                  ".mxl": "application/vnd.recordare.musicxml", ".mid": "audio/midi",
                  ".log": "text/plain; charset=utf-8", ".csv": "text/csv; charset=utf-8",
-                 ".md": "text/plain; charset=utf-8"}
+                 ".md": "text/plain; charset=utf-8", ".html": "text/html; charset=utf-8",
+                 ".json": "application/json"}
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -138,6 +140,13 @@ PAGE = """<!doctype html>
 <table id="scores"></table>
 <p id="sstatus" class="small" role="status"></p>
 
+<h2>Piano rolls</h2>
+<p class="muted small">Edit a result or full score note by note (Piano roll, next to it above), or write a new score
+  from scratch. Saving keeps the roll and its MIDI in rolls/; To result turns it into MusicXML among the results, so it
+  can go into a full score.</p>
+<table id="rolls"></table>
+<p><button id="newroll" type="button">New piano roll</button> <span id="pstatus" class="small" role="status"></span></p>
+
 <h2>MusicXML on this computer</h2>
 <p class="muted small">Finds .musicxml, .mxl and MusicXML .xml files on every drive. Hover over a path (or tab to it) to see all of it.
   Tick files and add them to the results to concatenate them with the rest; they are copied into inputs/, the originals stay as they are.</p>
@@ -157,10 +166,11 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const link = (p, label) => p ? `<a href="/files/${encodeURI(p)}" target="_blank">${label}</a>` : '';
 const post = (url, body) => fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-const ACTIONS = {edit: ['Edit', 'Open {} in MuseScore Studio'], pdf: ['PDF', 'Export {} to PDF'], midi: ['MIDI', 'Export {} to MIDI']};
+const ACTIONS = {edit: ['Edit', 'Open {} in MuseScore Studio'], roll: ['Piano roll', 'Open {} in the piano roll'],
+                 pdf: ['PDF', 'Export {} to PDF'], midi: ['MIDI', 'Export {} to MIDI']};
 const actionButtons = name => Object.entries(ACTIONS).map(([act, [label, aria]]) =>
   `<button data-act="${act}" aria-label="${esc(aria.replace('{}', name))}">${label}</button>`).join(' ');
-let state = {inputs: [], results: [], full: {name: ''}, scores: []};
+let state = {inputs: [], results: [], full: {name: ''}, scores: [], rolls: []};
 
 async function refresh() {
   state = await (await fetch('/api/state')).json();
@@ -204,6 +214,17 @@ function render() {
         <td class="muted small">${esc(s.sources.map(x => x.replace(/\\.musicxml$/, '')).join(' → '))}</td>
         <td class="nowrap">${link(s.xml, 'musicxml')} ${link(s.pdf, 'render')}</td>
         <td class="nowrap">${actionButtons(s.name)}</td></tr>`).join('')
+    : '<tr><td class="muted">None yet.</td></tr>';
+  $('#rolls').innerHTML = state.rolls.length
+    ? '<tr><th>piano roll</th><th>measures</th><th>parts</th><th>saved</th><th>files</th><th>results</th><th></th></tr>' +
+      state.rolls.map((r, i) => `<tr data-r="${i}">
+        <td><a href="/roll?name=${encodeURIComponent(r.name)}" target="_blank">${esc(r.name)}</a>
+          <span class="muted small">${esc(r.title && r.title !== r.name ? r.title : '')}</span></td>
+        <td>${esc(r.measures)}</td><td class="small">${esc((r.parts || []).join(', '))}</td>
+        <td class="small nowrap">${esc(r.modified)} · rev ${esc(r.revision)}</td>
+        <td class="nowrap">${link(r.midi, 'midi')} ${link(r.roll, 'roll')}</td>
+        <td class="small">${esc((r.results || []).join(', '))}</td>
+        <td class="nowrap"><button data-toresult="${i}" aria-label="Add ${esc(r.name)} to the results as MusicXML">To result</button></td></tr>`).join('')
     : '<tr><td class="muted">None yet.</td></tr>';
 }
 
@@ -291,10 +312,45 @@ async function openInMuseScore(kind, name, button, statusEl) {
   button.disabled = false;
 }
 
+// The piano roll of a result or full score: the one made before, or a new one read from its MusicXML.
+async function openRoll(kind, name, button, statusEl) {
+  const open = n => window.open('/roll?name=' + encodeURIComponent(n), '_blank');
+  if (state.rolls.some(r => r.name === name)) return open(name);
+  button.disabled = true;
+  statusEl.textContent = `Reading ${name} into a piano roll…`;
+  const res = await post('/api/roll/create', {name, source: kind, source_name: name});
+  const text = await res.text();
+  button.disabled = false;
+  if (!res.ok) { statusEl.innerHTML = `<span class="error">${esc(text)}</span>`; return; }
+  const {info} = JSON.parse(text);
+  const lost = Object.entries(info.dropped || {}).map(([k, n]) => `${n} ${k} note(s)`);
+  if (info.snapped) lost.push(`${info.snapped} note(s) snapped to the grid`);
+  statusEl.textContent = `Made the piano roll ${name}` + (lost.length ? ` (${lost.join(', ')}).` : '.');
+  open(name);
+  refresh();
+}
+
 function act(kind, name, button, statusEl) {
   if (button.dataset.act === 'edit') openInMuseScore(kind, name, button, statusEl);
+  else if (button.dataset.act === 'roll') openRoll(kind, name, button, statusEl);
   else exportFile(kind, name, button.dataset.act, button, statusEl);
 }
+
+$('#newroll').onclick = () => window.open('/roll', '_blank');
+$('#rolls').addEventListener('click', async e => {
+  const i = e.target.dataset.toresult;
+  if (i === undefined) return;
+  const r = state.rolls[+i];
+  e.target.disabled = true;
+  $('#pstatus').textContent = `Writing ${r.name} as MusicXML…`;
+  const res = await post('/api/roll/to-result', {name: r.name});
+  const text = await res.text();
+  e.target.disabled = false;
+  if (!res.ok) { $('#pstatus').innerHTML = `<span class="error">${esc(text)}</span>`; return; }
+  const out = JSON.parse(text);
+  $('#pstatus').textContent = `Added the result ${out.result}. ${out.warnings.join(' ')}`;
+  refresh();
+});
 
 // Bring back what was saved in MuseScore: when this page gets focus again, or on request.
 let syncing = false;
@@ -710,6 +766,16 @@ def import_upload(name: str, data: bytes) -> dict:
     return row
 
 
+def import_result(name: str, xml: bytes, replace: bool = False) -> dict:
+    """Add MusicXML as the result `name`; a name already used by a result or an input is refused unless
+    replace."""
+    filename = name if Path(name).suffix.lower() in MUSICXML_EXTS else f"{name}.musicxml"
+    taken = {r["output_name"] for r in read_results()} | {nfc(Path(n).stem) for n in list_inputs()}
+    if not replace and nfc(Path(filename).stem) in taken:
+        raise ValueError(f"{Path(filename).stem} already exists; pick another name or pass replace=true")
+    return import_upload(filename, xml)
+
+
 def result_stem(stem: str) -> str:
     """A sample name check_name accepts: "merkurius-m22-33 (1)" -> "merkurius-m22-33-1"."""
     stem = re.sub(r"-{2,}", "-", re.sub(r"\s*[^\w .-]+\s*", "-", nfc(stem)))
@@ -842,13 +908,26 @@ class Handler(BaseHTTPRequestHandler):
     def json_body(self) -> dict:
         return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
 
+    def roll_api(self, method: str) -> None:
+        """The piano-roll editor page and its API (roll_api.py)."""
+        import roll_api  # noqa: PLC0415 - it imports this module
+        url = urlparse(self.path)
+        body = self.rfile.read(int(self.headers.get("Content-Length", 0))) if method == "POST" else b""
+        code, ctype, data = roll_api.handle(method, unquote(url.path), parse_qs(url.query), dict(self.headers.items()),
+                                            body)
+        self.send(code, data, ctype)
+
     def do_GET(self) -> None:
         path = unquote(urlparse(self.path).path)
         if path == "/":
             return self.send(200, PAGE, "text/html; charset=utf-8")
         if path == "/api/state":
+            import roll_api  # noqa: PLC0415 - it imports this module
             return self.send_json({"inputs": list_inputs(), "results": read_results(),
-                                   "full": {"name": read_state()["name"]}, "scores": read_scores()})
+                                   "full": {"name": read_state()["name"]}, "scores": read_scores(),
+                                   "rolls": roll_api.list_rolls()})
+        if path == "/roll" or path.startswith("/api/roll/"):
+            return self.roll_api("GET")
         if path == "/api/search":
             since = parse_qs(urlparse(self.path).query).get("since", ["0"])[0]
             return self.send_json(SEARCH.snapshot(int(since) if since.isdigit() else 0))
@@ -861,6 +940,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path.startswith("/api/roll/"):
+            return self.roll_api("POST")
         if path == "/upload":
             data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             try:

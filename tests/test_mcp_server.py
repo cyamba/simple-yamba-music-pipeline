@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import os
 import sys
 
 import pytest
@@ -13,6 +14,7 @@ import ui
 from xmlbuild import backup, note, score
 
 WHOLE = note("C5", 16) + backup(16) + note("C4", 16, staff=2)
+MIDI = b"MThd\x00\x00\x00\x06\x00\x00\x00\x01\x01\xe0MTrk\x00\x00\x00\x04\x00\xff\x2f\x00"
 TIMEWISE = '<?xml version="1.0"?><score-timewise version="4.0"/>'
 
 
@@ -64,7 +66,8 @@ def test_tools_say_whether_they_change_anything():
     assert {"get_library", "get_music", "search", "fetch", "import_musicxml", "transcribe", "get_job",
             "combine_score", "export", "open_in_musescore"} <= set(by_name)
     assert {n for n, a in by_name.items() if a.read_only_hint} == {
-        "get_library", "get_music", "search", "fetch", "get_job", "get_computer_search"}
+        "get_library", "get_music", "search", "fetch", "get_job", "get_computer_search",
+        "open_piano_roll", "get_piano_roll", "load_piano_roll", "transform_roll"}
     assert {n for n, a in by_name.items() if a.destructive_hint} == {"delete_input"}
 
 
@@ -161,6 +164,75 @@ def test_only_one_input_is_redone_and_the_other_results_are_kept(root, monkeypat
     assert (root / "outputs/b.musicxml").read_text().count("<measure") == 3
 
 
+@pytest.fixture
+def exports(root, monkeypatch):
+    """MuseScore's MIDI export, faked: returns the list of scores exported."""
+    done = []
+
+    def export(xml, fmt, dst_dir):
+        done.append(xml.stem)
+        dst_dir.mkdir(exist_ok=True)
+        (dst_dir / f"{xml.stem}.mid").write_bytes(MIDI)
+        return dst_dir / f"{xml.stem}.mid"
+    monkeypatch.setattr(ui, "export", export)
+    return done
+
+
+def play(server, **args):
+    """play_midi's whole result, _meta included (call() only returns structured content)."""
+    async def go():
+        async with Client(server) as client:
+            return await client.call_tool("play_midi", args)
+    r = asyncio.run(go())
+    assert not r.is_error, r.content
+    return r
+
+
+def test_play_midi_exports_only_when_needed_and_hands_the_player_the_midi(root, exports):
+    server = mcp_server.build_server()
+    call(server, "import_musicxml", name="waltz", musicxml=score(WHOLE))
+
+    first = play(server, kind="result", name="waltz")
+    out, data = first.structured_content, first.meta[mcp_server.PLAYER_META]
+    assert (out["title"], out["exported"], out["midi"]["path"]) == ("waltz", True, "exports/waltz.mid")
+    assert out["player"]["path"] == "exports/waltz.player.html" and "url" not in out["player"]  # no HTTP: a file
+    assert base64.b64decode(data["base64"]) == MIDI and data["file"] == "waltz.mid"
+    assert first.content[0].text == f"MIDI player for result 'waltz': {root / 'exports/waltz.player.html'}"
+    page = (root / "exports/waltz.player.html").read_text()
+    assert data["base64"] in page and "{{MIDI_DATA}}" not in page
+
+    assert play(server, kind="result", name="waltz").structured_content["exported"] is False
+    assert exports == ["waltz"]
+    xml = root / "outputs/waltz.musicxml"
+    os.utime(xml, (xml.stat().st_mtime + 10,) * 2)  # edited since the export
+    assert play(server, kind="result", name="waltz").structured_content["exported"] is True
+    assert exports == ["waltz", "waltz"]
+    assert "no result called 'nope'" in error(server, "play_midi", kind="result", name="nope")
+
+
+def test_the_player_is_an_mcp_apps_widget():
+    async def listing():
+        async with Client(mcp_server.build_server()) as client:
+            tools = {t.name: t for t in (await client.list_tools()).tools}
+            resources = (await client.list_resources()).resources
+            read = await client.read_resource(mcp_server.PLAYER_URI)
+            return tools, resources, read
+    tools, resources, read = asyncio.run(listing())
+    assert tools["play_midi"].meta == {"ui": {"resourceUri": mcp_server.PLAYER_URI},
+                                       "openai/outputTemplate": mcp_server.PLAYER_URI}
+    [widget] = [r for r in resources if str(r.uri) == mcp_server.PLAYER_URI]
+    assert widget.mime_type == "text/html;profile=mcp-app"
+    [html] = read.contents
+    assert html.mime_type == "text/html;profile=mcp-app" and html.meta["ui"]["prefersBorder"] is False
+    assert "ui/initialize" in html.text
+    assert '<script id="midi-data" type="application/json">null</script>' in html.text
+
+
+def test_the_player_page_cant_be_broken_out_of():
+    page = mcp_server.player_html({"title": "</script><b>x", "base64": ""})
+    assert "</script><b>" not in page and "\\u003c/script>\\u003cb>x" in page
+
+
 def test_http_serves_downloads_behind_the_token_and_checks_the_host(root):
     server = mcp_server.build_server(token="s3cret", public_url="https://abc.example/")
     out = call(server, "import_musicxml", name="waltz", musicxml=score(WHOLE))
@@ -182,7 +254,22 @@ def test_http_serves_downloads_behind_the_token_and_checks_the_host(root):
         assert client.post("/mcp", json=init, headers=headers).status_code == 404
 
 
+def test_over_http_the_player_is_a_page_the_server_hosts(root, exports):
+    server = mcp_server.build_server(token="s3cret", public_url="https://abc.example")
+    call(server, "import_musicxml", name="waltz", musicxml=score(WHOLE))
+    result = play(server, kind="result", name="waltz")
+    url = "https://abc.example/s3cret/files/exports/waltz.player.html"
+    assert result.structured_content["player"]["url"] == url and result.content[0].text.endswith(url)
+    assert result.meta[mcp_server.PLAYER_META]["download_url"] == "https://abc.example/s3cret/files/exports/waltz.mid"
+    with TestClient(mcp_server.http_app(server, token="s3cret", hosts=["abc.example"]),
+                    base_url="http://127.0.0.1:8790") as client:
+        page = client.get("/s3cret/files/exports/waltz.player.html")
+        assert page.status_code == 200 and page.headers["content-type"] == "text/html; charset=utf-8"
+        assert client.get("/s3cret/files/exports/waltz.mid").content == MIDI
+        assert client.get("/files/exports/waltz.player.html").status_code == 404
+
+
 def test_list_tools_prints_one_line_per_tool(capsys):
     assert mcp_server.main(["--list-tools"]) == 0
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 19 and lines[0].startswith("get_library: ")
+    assert len(lines) == 36 and lines[0].startswith("get_library: ")

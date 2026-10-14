@@ -18,8 +18,11 @@ completed/ finished pieces: completed/<piece>/ holds the full score (.musicxml +
 scores/    full scores concatenated from results in the UI (<name>.musicxml + MuseScore PDF,
            and <name>.mscz once opened in MuseScore from the UI)
 edits/     <name>.mscz: results opened in MuseScore from the UI, where your edits are saved
+rolls/     piano rolls: <name>.roll.json (the editable score) and <name>.mid, rewritten on every save;
+           history/ keeps each roll's last 20 revisions (not committed)
 scripts/   run_batch.py, postprocess.py, score_check.py, combine.py, samples.py, export.py, edits.py, find_musicxml.py, ui.py,
-           mcp_server.py + mcp_public.sh (the pipeline as an MCP server, see docs/MCP.md)
+           mcp_server.py + mcp_public.sh (the pipeline as an MCP server, see docs/MCP.md),
+           the piano roll: piano_roll.html (the editor), roll.py, roll_ops.py, roll_midi.py, roll_xml.py, roll_api.py, pitch.py
 tests/     uv run pytest
 ```
 
@@ -84,6 +87,37 @@ results without a batch run. In the results you can also:
 - **Export** a result or a full score to PDF or MIDI with its PDF / MIDI buttons: MuseScore
   writes `exports/<name>.pdf` or `.mid` and the browser downloads it. The same from the command
   line: `uv run python scripts/export.py pdf|midi <file.musicxml> ...`
+- **Piano roll** opens a result or a full score in the piano-roll editor (below), as a new roll of
+  the same name, or the roll made from it before.
+
+### The piano roll
+
+`http://127.0.0.1:8765/roll` (or **New piano roll** in the UI) is an editor for writing or changing a
+score note by note. A roll can start empty, from a result or full score, or from a MIDI file. It is
+saved as `rolls/<name>.roll.json` with its MIDI next to it, and **To result** turns it into MusicXML
+among the results, so it can be concatenated into a full score like any other. Reading a score
+keeps the notes only: dynamics, slurs, lyrics, grace notes and repeats are left out, and tuplets
+are snapped to the grid. The editor says how many.
+
+- **Grid.** Three lengths, each a whole note down to a 128th: *default* is what a click writes, *min*
+  is the step for dragging and moving, and *max* is the longest a drag makes a note.
+- **Writing.** Click an empty cell for a note of the default length, and double-click it for a rest.
+  Double-click a note to delete it. Drag a note sideways to shorten or lengthen it by the min step:
+  shortened to nothing, it becomes a rest. Drag it up or down to change its pitch, or ⌥-drag it to
+  move it. ⇧-drag selects notes.
+- **Parts.** Each part has its own colour. Click a part (or one of its notes) to write in it. Parts of
+  one instrument are its staves, so the piano preset's right and left hands become one part with two
+  staves, like the HOMR results.
+- **Transforms.** Drag across the ruler to select bars. Transpose, mirror (chromatic about a note, or
+  diatonic in a tonic and mode), retrograde, retrograde-inversion, or multiply the time by a factor
+  (later music moves along). With nothing selected they act on the whole score.
+- **Playing.** Space plays from the playhead, with a click if you want one, looping the selected bars
+  if loop is on. The ruler and the readout show the bar and beat.
+- **History.** ⌘Z undoes. Save keeps a revision, and an agent's edits show up in an open editor by
+  themselves.
+
+The same editor shows in the chat when an agent opens a roll. The agent can also make every edit
+itself, in words: see [docs/MCP.md](docs/MCP.md#the-piano-roll).
 
 **MusicXML on this computer** searches every drive for `.musicxml`, `.mxl` and `.xml` files that hold
 a MusicXML score. It lists each file with its last-modified date and absolute path; hover over or tab

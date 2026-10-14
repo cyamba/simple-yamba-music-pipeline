@@ -186,6 +186,15 @@ def upsert_result(row: dict) -> None:
     write_results([r for i, r in enumerate(rows) if i not in same[1:]])
 
 
+# On macOS 27, MuseScore 4.7.5's command line often aborts while shutting down, after it has
+# written its output (the files match those of clean runs).
+ABORTED = (-6, 134)  # SIGABRT, as a signal or as a shell exit status
+
+
+def wrote(path: Path, since: float) -> bool:
+    return path.is_file() and path.stat().st_size > 0 and path.stat().st_mtime >= since
+
+
 def musescore_convert(mscore: str, src: Path, dst: Path) -> str:
     """Have MuseScore write src as dst, in the format of dst's extension. Returns "yes" or "no (reason)"."""
     started = time.time() - 1
@@ -193,7 +202,7 @@ def musescore_convert(mscore: str, src: Path, dst: Path) -> str:
         p = subprocess.run([mscore, "-o", str(dst), str(src)], capture_output=True, text=True, timeout=180)
     except subprocess.TimeoutExpired:
         return "no (timeout)"
-    if p.returncode == 0:
+    if p.returncode == 0 or (p.returncode in ABORTED and wrote(dst, started)):
         return "yes"
     logged = str(src.relative_to(ROOT)) if src.is_relative_to(ROOT) else str(src)
     return f"no (exit {p.returncode}{': ' + reason if (reason := musescore_load_error(logged, started)) else ''})"

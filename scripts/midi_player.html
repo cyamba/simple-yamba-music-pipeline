@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MIDI player</title>
+<!--
+  The MIDI player behind play_midi (mcp_server.py), from the Merkurius player artifact. One page, two modes:
+  - standalone: the server fills #midi-data with the MIDI and its title (exports/<name>.player.html)
+  - MCP Apps widget: #midi-data is null and the host (Claude, ChatGPT) hands over the play_midi result
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=Work+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one centred instrument panel; piano roll doubles as the scrubber, transport and dials beneath. */
+:root {
+  --ground: #0c0f15;
+  --glow: #14303a;
+  --panel: #131821;
+  --panel-2: #0f141c;
+  --line: #262f3d;
+  --ink: #e7ebf1;
+  --ink-dim: #8a95a8;
+  --accent: #6fe3cf;
+  --accent-ink: #052a24;
+  --accent-soft: #163a37;
+  --played: #6fe3cf14;
+  --playhead: #f2f6fa;
+  --grid: #1f2836;
+  --voice-1: #6fe3cf;
+  --voice-2: #b9a6ff;
+  --voice-3: #f3c47a;
+  --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+  --font-body: "Work Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --ground: #e8ebf0; --glow: #cfe7e3; --panel: #f9fafc; --panel-2: #eef1f5; --line: #d2d8e1;
+    --ink: #121722; --ink-dim: #586274; --accent: #0b7a69; --accent-ink: #ffffff; --accent-soft: #d6efea;
+    --played: #0b7a6912; --playhead: #121722; --grid: #dde2ea;
+    --voice-1: #0b8a76; --voice-2: #6a52c7; --voice-3: #b06f12;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --ground: #e8ebf0; --glow: #cfe7e3; --panel: #f9fafc; --panel-2: #eef1f5; --line: #d2d8e1;
+  --ink: #121722; --ink-dim: #586274; --accent: #0b7a69; --accent-ink: #ffffff; --accent-soft: #d6efea;
+  --played: #0b7a6912; --playhead: #121722; --grid: #dde2ea;
+  --voice-1: #0b8a76; --voice-2: #6a52c7; --voice-3: #b06f12;
+  color-scheme: light;
+}
+
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  background: radial-gradient(900px 420px at 50% -8%, var(--glow), transparent 70%), var(--ground);
+  color: var(--ink);
+  font: 400 15px/1.5 var(--font-body);
+}
+.wrap { padding-block: 40px; padding-inline: 16px; }
+.player {
+  max-width: 680px; margin: 0 auto;
+  display: grid; gap: 22px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+  padding: 28px;
+}
+.head { display: grid; gap: 4px; }
+.eyebrow {
+  margin: 0; font: 500 11px/1.4 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-dim); overflow-wrap: anywhere;
+}
+.eyebrow .sym { color: var(--accent); margin-right: 6px; }
+h1 {
+  margin: 0; font: 600 clamp(2.1rem, 6vw, 3rem)/1.05 var(--font-display);
+  letter-spacing: -0.01em; text-wrap: balance; overflow-wrap: anywhere;
+}
+.stats {
+  margin: 4px 0 0; font: 400 12.5px/1.5 var(--font-mono); color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.roll {
+  position: relative; height: 190px; border-radius: 12px; overflow: hidden;
+  background: var(--panel-2); border: 1px solid var(--line);
+  cursor: pointer; touch-action: none; user-select: none;
+}
+.roll canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.played {
+  position: absolute; inset: 0; background: var(--played);
+  transform-origin: left center; transform: scaleX(0); pointer-events: none;
+}
+.playhead {
+  position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: var(--playhead);
+  transform: translateX(0); pointer-events: none;
+}
+
+.transport { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+button {
+  font: inherit; color: var(--ink); background: transparent; cursor: pointer;
+  display: inline-grid; place-items: center; border: 1px solid var(--line); border-radius: 999px;
+  transition: background-color .15s, border-color .15s, color .15s, transform .1s;
+}
+button:disabled { cursor: default; opacity: 0.45; }
+button svg { width: 20px; height: 20px; fill: currentColor; }
+.icon-btn { width: 42px; height: 42px; }
+.icon-btn:hover { border-color: var(--ink-dim); }
+.icon-btn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.play-btn {
+  width: 58px; height: 58px; border: none;
+  background: var(--accent); color: var(--accent-ink);
+}
+.play-btn svg { width: 26px; height: 26px; }
+.play-btn:hover { filter: brightness(1.06); }
+.play-btn:active, .icon-btn:active { transform: scale(0.96); }
+button:focus-visible, input:focus-visible, .roll:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.time {
+  margin-left: auto; font: 500 15px/1 var(--font-mono); font-variant-numeric: tabular-nums;
+  color: var(--ink-dim); display: flex; gap: 6px;
+}
+.time #cur { color: var(--ink); }
+
+.dials { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 28px; }
+.dial {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 12px; min-width: 0;
+}
+.dial-label { font-size: 13px; font-weight: 500; color: var(--ink-dim); }
+.dial output { font: 500 12.5px/1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink); }
+.dial input { grid-column: 1 / -1; width: 100%; margin: 0; accent-color: var(--accent); }
+
+.foot { margin: 0; font-size: 12.5px; color: var(--ink-dim); }
+.foot kbd {
+  font: 500 11px/1 var(--font-mono); padding: 2px 6px; border-radius: 5px;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
+}
+.foot a { color: var(--accent); font-weight: 500; text-underline-offset: 2px; }
+.error { color: var(--voice-3); }
+
+/* Inside a chat (MCP Apps widget): no page backdrop, the panel is the card. */
+html.embedded, html.embedded body { min-height: 0; }
+html.embedded body { background: transparent; }
+html.embedded .wrap { padding: 2px; }
+
+@media (max-width: 520px) {
+  .wrap { padding-block: 20px; }
+  .player { padding: 20px; gap: 18px; border-radius: 14px; }
+  .roll { height: 150px; }
+  .dials { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  button { transition: none; }
+}
+</style>
+</head>
+<body>
+<main class="wrap" id="wrap">
+  <section class="player" aria-label="MIDI player">
+    <header class="head">
+      <p class="eyebrow"><span class="sym" aria-hidden="true">♪</span>Yamba Music<span id="source"></span></p>
+      <h1 id="title">MIDI player</h1>
+      <p class="stats" id="stats">Waiting for the MIDI…</p>
+    </header>
+
+    <div class="roll" id="roll" role="slider" tabindex="0" aria-label="Playback position"
+         aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
+      <canvas id="rollCanvas"></canvas>
+      <div class="played" id="played"></div>
+      <div class="playhead" id="playhead"></div>
+    </div>
+
+    <div class="transport">
+      <button class="icon-btn" id="restart" type="button" aria-label="Back to start" title="Back to start">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+      </button>
+      <button class="play-btn" id="play" type="button" aria-label="Play" title="Play (Space)" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path id="playIcon" d="M8 5.5v13l10.5-6.5z"/></svg>
+      </button>
+      <button class="icon-btn" id="loop" type="button" aria-pressed="false" aria-label="Loop" title="Loop">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+      </button>
+      <div class="time" aria-live="off"><span id="cur">0:00</span><span>/</span><span id="dur">0:00</span></div>
+    </div>
+
+    <div class="dials">
+      <label class="dial" for="speed">
+        <span class="dial-label">Speed</span>
+        <output id="speedOut" for="speed">1.00×</output>
+        <input type="range" id="speed" min="0.5" max="1.5" step="0.05" value="1">
+      </label>
+      <label class="dial" for="volume">
+        <span class="dial-label">Volume</span>
+        <output id="volOut" for="volume">70%</output>
+        <input type="range" id="volume" min="0" max="1" step="0.01" value="0.7">
+      </label>
+    </div>
+
+    <p class="foot">Played by a small synthesizer in your browser. <kbd>Space</kbd> plays or pauses; click or drag the roll to jump; <kbd>←</kbd> <kbd>→</kbd> skip 5 seconds.<span id="downloadWrap" hidden> <a id="download" download>Download the MIDI file</a></span></p>
+  </section>
+</main>
+
+<script id="midi-data" type="application/json">{{MIDI_DATA}}</script>
+<script>
+function parseMidi(data) {
+  let pos = 0;
+  const u8 = () => data[pos++];
+  const u16 = () => { const v = (data[pos] << 8) | data[pos + 1]; pos += 2; return v; };
+  const u32 = () => { const v = ((data[pos] << 24) | (data[pos + 1] << 16) | (data[pos + 2] << 8) | data[pos + 3]) >>> 0; pos += 4; return v; };
+  const str = (n) => { let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(data[pos++]); return s; };
+  const vlq = () => { let v = 0, b; do { b = data[pos++]; v = (v << 7) | (b & 0x7f); } while (b & 0x80); return v; };
+
+  if (str(4) !== 'MThd') throw new Error('Not a standard MIDI file');
+  const headerLen = u32();
+  const format = u16();
+  const trackCount = u16();
+  const division = u16();
+  pos += headerLen - 6;
+  const ppq = division & 0x8000 ? 480 : division;
+
+  const tempos = [];
+  const notes = [];
+  let lastTick = 0;
+
+  for (let t = 0; t < trackCount && pos < data.length; t++) {
+    const type = str(4);
+    const len = u32();
+    const end = pos + len;
+    if (type !== 'MTrk') { pos = end; continue; }
+    let tick = 0;
+    let running = 0;
+    const open = new Map();
+    while (pos < end) {
+      tick += vlq();
+      let status = data[pos];
+      if (status & 0x80) pos++; else status = running;
+      if (status === 0xff) {
+        const meta = u8();
+        const mlen = vlq();
+        if (meta === 0x51 && mlen === 3) {
+          tempos.push({ tick, us: (data[pos] << 16) | (data[pos + 1] << 8) | data[pos + 2] });
+        }
+        pos += mlen;
+        continue;
+      }
+      if (status === 0xf0 || status === 0xf7) { pos += vlq(); continue; }
+      running = status;
+      const kind = status & 0xf0;
+      const ch = status & 0x0f;
+      if (kind === 0x90 || kind === 0x80) {
+        const pitch = u8();
+        const vel = u8();
+        const key = ch * 128 + pitch;
+        if (kind === 0x90 && vel > 0) {
+          if (!open.has(key)) open.set(key, []);
+          open.get(key).push({ tick, vel });
+        } else {
+          const q = open.get(key);
+          if (q && q.length) {
+            const on = q.shift();
+            notes.push({ startTick: on.tick, endTick: tick, pitch, velocity: on.vel, channel: ch, track: t });
+          }
+        }
+      } else if (kind === 0xa0 || kind === 0xb0 || kind === 0xe0) {
+        pos += 2;
+      } else if (kind === 0xc0 || kind === 0xd0) {
+        pos += 1;
+      } else {
+        pos = end;
+      }
+    }
+    for (const [key, q] of open) {
+      for (const on of q) notes.push({ startTick: on.tick, endTick: tick, pitch: key % 128, velocity: on.vel, channel: Math.floor(key / 128), track: t });
+    }
+    lastTick = Math.max(lastTick, tick);
+    pos = end;
+  }
+
+  tempos.sort((a, b) => a.tick - b.tick);
+  if (!tempos.length || tempos[0].tick > 0) tempos.unshift({ tick: 0, us: tempos.length ? tempos[0].us : 500000 });
+  const segs = [];
+  let acc = 0;
+  for (let i = 0; i < tempos.length; i++) {
+    segs.push({ tick: tempos[i].tick, us: tempos[i].us, sec: acc });
+    if (i + 1 < tempos.length) acc += ((tempos[i + 1].tick - tempos[i].tick) / ppq) * (tempos[i].us / 1e6);
+  }
+  const toSec = (tick) => {
+    let s = segs[0];
+    for (const g of segs) { if (g.tick <= tick) s = g; else break; }
+    return s.sec + ((tick - s.tick) / ppq) * (s.us / 1e6);
+  };
+
+  for (const n of notes) { n.startSec = toSec(n.startTick); n.endSec = toSec(n.endTick); }
+  notes.sort((a, b) => a.startSec - b.startSec || a.pitch - b.pitch);
+
+  const duration = notes.reduce((m, n) => Math.max(m, n.endSec), 0);
+  return { format, trackCount, ppq, tempos, notes, duration };
+}
+
+const $ = (id) => document.getElementById(id);
+const roll = $('roll'), canvas = $('rollCanvas'), playheadEl = $('playhead'), playedEl = $('played');
+const playBtn = $('play'), playIcon = $('playIcon'), loopBtn = $('loop'), restartBtn = $('restart');
+const curEl = $('cur'), durEl = $('dur'), statsEl = $('stats'), titleEl = $('title'), sourceEl = $('source');
+const downloadWrap = $('downloadWrap'), downloadEl = $('download');
+const speedIn = $('speed'), speedOut = $('speedOut'), volIn = $('volume'), volOut = $('volOut');
+
+const ICON_PLAY = 'M8 5.5v13l10.5-6.5z';
+const ICON_PAUSE = 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z';
+const NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+const noteName = (m) => NAMES[m % 12] + (Math.floor(m / 12) - 1);
+const fmt = (s) => { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+
+const TIMBRES = [
+  { wave: 'triangle', cutoff: 7000, level: 0.16 },
+  { wave: 'sawtooth', cutoff: 1900, level: 0.075 },
+  { wave: 'square', cutoff: 2300, level: 0.06 },
+];
+const LOOKAHEAD = 1.5;
+
+let notes = [], duration = 0, minPitch = 60, maxPitch = 72;
+let ctx = null, master = null;
+let playing = false, loop = false, speed = 1, volume = 0.7;
+let anchorCtx = 0, anchorSong = 0, pausedAt = 0, nextIdx = 0;
+let dragTime = null, rollW = 0;
+let loaded = null;
+const voices = new Set();
+
+// --- the piece: {title, name, kind, file, base64, download_url} from the page or from the host ---------------
+function load(data) {
+  if (!data || !data.base64 || data.base64 === loaded) return;
+  loaded = data.base64;
+  if (playing) pause();
+  pausedAt = 0;
+  const title = data.title || data.name || 'MIDI player';
+  titleEl.textContent = title;
+  document.title = title;
+  sourceEl.textContent = [data.file, data.kind === 'score' ? 'full score' : data.kind].filter(Boolean).map((s) => ' · ' + s).join('');
+  roll.closest('section').setAttribute('aria-label', title + ' MIDI player');
+  // the standalone page sits next to the .mid in exports/; the widget gets a link only over HTTP
+  const href = EMBEDDED ? (data.file && encodeURIComponent(data.file)) : data.download_url;
+  downloadWrap.hidden = !href;
+  if (href) downloadEl.href = href;
+  try {
+    const bin = atob(data.base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const midi = parseMidi(bytes);
+    notes = midi.notes;
+    duration = midi.duration;
+    if (!notes.length) throw new Error('it has no notes');
+    const tracks = [...new Set(notes.map((n) => n.track))].sort((a, b) => a - b);
+    for (const n of notes) n.voice = tracks.indexOf(n.track);
+    const pitches = notes.map((n) => n.pitch);
+    minPitch = Math.min(...pitches);
+    maxPitch = Math.max(...pitches);
+    const bpms = [...new Set(midi.tempos.map((t) => Math.round(60e6 / t.us)))];
+    const bpm = bpms.length === 1 ? bpms[0] + ' BPM' : Math.min(...bpms) + '–' + Math.max(...bpms) + ' BPM';
+    statsEl.textContent = [
+      notes.length + ' notes',
+      tracks.length + (tracks.length === 1 ? ' voice' : ' voices'),
+      bpm,
+      noteName(minPitch) + '–' + noteName(maxPitch),
+      fmt(duration),
+    ].join(' · ');
+    statsEl.classList.remove('error');
+    durEl.textContent = fmt(duration);
+    roll.setAttribute('aria-valuemax', Math.round(duration));
+    playBtn.disabled = false;
+  } catch (err) {
+    notes = [];
+    duration = 0;
+    statsEl.textContent = 'This MIDI file could not be read: ' + err.message;
+    statsEl.classList.add('error');
+    playBtn.disabled = true;
+  }
+  drawRoll();
+}
+
+function songTime() {
+  if (!playing) return pausedAt;
+  return Math.min(duration, Math.max(0, anchorSong + (ctx.currentTime - anchorCtx) * speed));
+}
+
+function ensureAudio() {
+  if (ctx) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -14;
+  comp.ratio.value = 4;
+  master = ctx.createGain();
+  master.gain.value = volume;
+  master.connect(comp).connect(ctx.destination);
+}
+
+function voice(n, when, dur) {
+  const now = ctx.currentTime;
+  if (when < now) { dur -= now - when; when = now; }
+  if (dur <= 0.005) return;
+  const t = TIMBRES[n.voice % TIMBRES.length];
+  const osc = ctx.createOscillator();
+  const filt = ctx.createBiquadFilter();
+  const g = ctx.createGain();
+  osc.type = t.wave;
+  osc.frequency.value = 440 * Math.pow(2, (n.pitch - 69) / 12);
+  filt.type = 'lowpass';
+  filt.frequency.value = t.cutoff;
+  const peak = t.level * (0.3 + 0.7 * n.velocity / 127);
+  const a = when + 0.012, h = Math.max(a, when + dur), r = h + 0.09;
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(peak, a);
+  g.gain.linearRampToValueAtTime(peak * 0.6, h);
+  g.gain.linearRampToValueAtTime(0, r);
+  osc.connect(filt).connect(g).connect(master);
+  osc.start(when);
+  osc.stop(r + 0.02);
+  const v = { osc, g };
+  voices.add(v);
+  osc.onended = () => { voices.delete(v); g.disconnect(); };
+}
+
+function silence() {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  for (const v of voices) {
+    v.g.gain.cancelScheduledValues(now);
+    v.g.gain.setValueAtTime(v.g.gain.value, now);
+    v.g.gain.linearRampToValueAtTime(0, now + 0.025);
+    try { v.osc.stop(now + 0.03); } catch (e) {}
+  }
+}
+
+function pump() {
+  if (!playing) return;
+  const horizon = songTime() + LOOKAHEAD * speed;
+  while (nextIdx < notes.length && notes[nextIdx].startSec < horizon) {
+    const n = notes[nextIdx++];
+    if (n.startSec < anchorSong) continue;
+    voice(n, anchorCtx + (n.startSec - anchorSong) / speed, (n.endSec - n.startSec) / speed);
+  }
+}
+
+function startAt(from) {
+  silence();
+  anchorCtx = ctx.currentTime + 0.04;
+  anchorSong = from;
+  playing = true;
+  for (const n of notes) {
+    if (n.startSec >= from) break;
+    if (n.endSec > from) voice(n, anchorCtx, (n.endSec - from) / speed);
+  }
+  nextIdx = 0;
+  while (nextIdx < notes.length && notes[nextIdx].startSec < from) nextIdx++;
+  pump();
+  setPlayUI();
+}
+
+function pause() {
+  pausedAt = songTime();
+  playing = false;
+  silence();
+  setPlayUI();
+}
+
+async function togglePlay() {
+  if (!notes.length) return;
+  ensureAudio();
+  if (ctx.state === 'suspended') await ctx.resume();
+  if (playing) pause();
+  else startAt(pausedAt >= duration ? 0 : pausedAt);
+}
+
+function seek(t) {
+  t = Math.min(Math.max(0, t), duration);
+  if (playing) startAt(t);
+  else pausedAt = t;
+  render();
+}
+
+function setPlayUI() {
+  playIcon.setAttribute('d', playing ? ICON_PAUSE : ICON_PLAY);
+  playBtn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  playBtn.title = playing ? 'Pause (Space)' : 'Play (Space)';
+}
+
+function render() {
+  const t = dragTime ?? songTime();
+  const frac = duration ? t / duration : 0;
+  playheadEl.style.transform = 'translateX(' + (frac * rollW) + 'px)';
+  playedEl.style.transform = 'scaleX(' + frac + ')';
+  const label = fmt(t);
+  if (curEl.textContent !== label) {
+    curEl.textContent = label;
+    roll.setAttribute('aria-valuenow', Math.floor(t));
+    roll.setAttribute('aria-valuetext', label + ' of ' + fmt(duration));
+  }
+}
+
+function frame() {
+  if (playing && songTime() >= duration) {
+    if (loop) startAt(0);
+    else { playing = false; pausedAt = 0; setPlayUI(); }
+  }
+  render();
+  requestAnimationFrame(frame);
+}
+
+function drawRoll() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = roll.clientWidth, h = roll.clientHeight;
+  rollW = w;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  const c = canvas.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, w, h);
+  if (!notes.length) return;
+  const css = getComputedStyle(document.documentElement);
+  const tok = (name) => css.getPropertyValue(name).trim();
+  const lo = minPitch - 2, hi = maxPitch + 2, pad = 10;
+  const rowH = (h - pad * 2) / (hi - lo + 1);
+  const y = (p) => pad + (hi - p) * rowH;
+  c.font = '500 10px ' + tok('--font-mono');
+  c.textBaseline = 'bottom';
+  for (let p = Math.ceil(lo / 12) * 12; p <= hi; p += 12) {
+    const yy = Math.round(y(p) + rowH / 2) + 0.5;
+    c.fillStyle = tok('--grid');
+    c.fillRect(0, yy, w, 1);
+    c.fillStyle = tok('--ink-dim');
+    c.fillText(noteName(p), 6, yy - 2);
+  }
+  const colors = [tok('--voice-1'), tok('--voice-2'), tok('--voice-3')];
+  const barH = Math.max(2, Math.min(6, rowH));
+  for (const n of notes) {
+    const x0 = (n.startSec / duration) * w;
+    const x1 = (n.endSec / duration) * w;
+    c.globalAlpha = 0.5 + 0.5 * (n.velocity / 127);
+    c.fillStyle = colors[n.voice % colors.length];
+    c.fillRect(x0, y(n.pitch) + (rowH - barH) / 2, Math.max(1.5, x1 - x0 - 0.5), barH);
+  }
+  c.globalAlpha = 1;
+  render();
+}
+
+function timeAt(clientX) {
+  const r = roll.getBoundingClientRect();
+  return Math.min(1, Math.max(0, (clientX - r.left) / r.width)) * duration;
+}
+
+roll.addEventListener('pointerdown', (e) => {
+  if (!notes.length) return;
+  roll.setPointerCapture(e.pointerId);
+  dragTime = timeAt(e.clientX);
+  render();
+});
+roll.addEventListener('pointermove', (e) => {
+  if (dragTime === null) return;
+  dragTime = timeAt(e.clientX);
+  render();
+});
+const endDrag = () => {
+  if (dragTime === null) return;
+  const t = dragTime;
+  dragTime = null;
+  seek(t);
+};
+roll.addEventListener('pointerup', endDrag);
+roll.addEventListener('pointercancel', endDrag);
+roll.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    seek(songTime() + (e.key === 'ArrowRight' ? 5 : -5));
+  } else if (e.key === 'Home') { e.preventDefault(); seek(0); }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' && e.key !== ' ') return;
+  const tag = e.target.tagName;
+  if (tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'A') return;
+  e.preventDefault();
+  togglePlay();
+});
+
+playBtn.addEventListener('click', togglePlay);
+restartBtn.addEventListener('click', () => seek(0));
+loopBtn.addEventListener('click', () => {
+  loop = !loop;
+  loopBtn.setAttribute('aria-pressed', String(loop));
+});
+
+speedIn.addEventListener('input', () => {
+  const t = songTime();
+  speed = parseFloat(speedIn.value);
+  speedOut.textContent = speed.toFixed(2) + '×';
+  if (playing) startAt(t);
+});
+volIn.addEventListener('input', () => {
+  volume = parseFloat(volIn.value);
+  volOut.textContent = Math.round(volume * 100) + '%';
+  if (master) master.gain.setTargetAtTime(volume, ctx.currentTime, 0.02);
+});
+
+// --- MCP Apps: the host (Claude, ChatGPT) hands this view the play_midi result over postMessage ------------
+// JSON-RPC as in the ext-apps spec 2026-01-26: ui/initialize, then the host sends the tool result.
+const META_KEY = 'yamba-music/midi';
+const EMBEDDED = JSON.parse($('midi-data').textContent);
+
+function applyContext(context) {
+  const theme = context && context.theme;
+  if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+}
+
+function midiIn(x) {
+  // the play_midi result's _meta, wherever a host puts it (MCP Apps tool-result, window.openai)
+  if (!x || typeof x !== 'object') return null;
+  const places = [x, x._meta, x.mcp_tool_result && x.mcp_tool_result._meta, x.call_tool_result && x.call_tool_result._meta];
+  const found = places.find((p) => p && p[META_KEY]);
+  return found ? found[META_KEY] : null;
+}
+
+function connect() {
+  let nextId = 1;
+  const pending = new Map();
+  const post = (msg) => window.parent.postMessage({ jsonrpc: '2.0', ...msg }, '*');
+  const request = (method, params) => new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    post({ id, method, params });
+  });
+  const notify = (method, params) => post({ method, params });
+
+  window.addEventListener('message', (e) => {
+    const m = e.data;
+    if (e.source !== window.parent || !m || m.jsonrpc !== '2.0') return;
+    if (!m.method) {
+      const p = pending.get(m.id);
+      if (!p) return;
+      pending.delete(m.id);
+      if (m.error) p.reject(new Error(m.error.message)); else p.resolve(m.result);
+    } else if (m.method === 'ui/notifications/tool-result') {
+      load(midiIn(m.params));
+    } else if (m.method === 'ui/notifications/host-context-changed') {
+      applyContext(m.params);
+    } else if (m.method === 'ui/resource-teardown') {
+      if (playing) pause();
+      post({ id: m.id, result: {} });
+    } else if (m.id !== undefined) {
+      post({ id: m.id, error: { code: -32601, message: 'Method not found: ' + m.method } });
+    }
+  });
+
+  request('ui/initialize', {
+    appInfo: { name: 'Yamba Music MIDI player', version: '1.0.0' },
+    appCapabilities: {},
+    protocolVersion: '2026-01-26',
+  }).then((result) => {
+    applyContext(result && result.hostContext);
+    notify('ui/notifications/initialized', {});
+  }, () => {});
+
+  // the host sizes the iframe to the player
+  let lastHeight = 0;
+  new ResizeObserver(() => {
+    const height = Math.ceil($('wrap').getBoundingClientRect().height);
+    if (height !== lastHeight) { lastHeight = height; notify('ui/notifications/size-changed', { height }); }
+  }).observe($('wrap'));
+
+  downloadEl.addEventListener('click', (e) => {
+    e.preventDefault();
+    request('ui/open-link', { url: downloadEl.href }).catch(() => {});
+  });
+}
+
+function fromOpenAI() {
+  if (!window.openai) return;
+  applyContext({ theme: window.openai.theme });
+  load(midiIn(window.openai.toolResponseMetadata));
+}
+
+if (EMBEDDED) {
+  load(EMBEDDED);
+} else if (window.parent !== window) {
+  document.documentElement.classList.add('embedded');
+  connect();
+  fromOpenAI();
+  window.addEventListener('openai:set_globals', fromOpenAI);
+} else {
+  statsEl.textContent = 'No MIDI here: open this player with the play_midi tool.';
+}
+
+setInterval(pump, 200);
+new ResizeObserver(drawRoll).observe(roll);
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawRoll);
+new MutationObserver(drawRoll).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+if (document.fonts) document.fonts.ready.then(drawRoll);
+drawRoll();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

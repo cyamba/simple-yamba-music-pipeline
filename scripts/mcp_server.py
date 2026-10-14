@@ -13,7 +13,8 @@ HTTP settings, from the environment:
   YAMBA_MCP_ALLOWED_HOSTS  public host names to accept besides localhost, comma-separated (the tunnel's)
   YAMBA_MCP_TOKEN          serve everything under /<token>/ (/<token>/mcp, /<token>/files/...), so a public
                            URL can't be guessed; ChatGPT connectors offer no auth besides OAuth
-  YAMBA_MCP_PUBLIC_URL     the public base URL, e.g. https://abc.trycloudflare.com; tools then return links
+  YAMBA_MCP_PUBLIC_URL     the public base URL, e.g. https://abc.trycloudflare.com, for the links tools return
+                           (http://127.0.0.1:<port> when not set)
 
 See docs/MCP.md for connecting each harness.
 """
@@ -24,6 +25,7 @@ import asyncio
 import base64
 import binascii
 import functools
+import json
 import os
 import shutil
 import subprocess
@@ -41,10 +43,14 @@ from urllib.parse import quote, urlparse
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
-from starlette.responses import FileResponse, PlainTextResponse
+from starlette.concurrency import run_in_threadpool
+from starlette.responses import FileResponse, PlainTextResponse, Response
 
+import roll
+import roll_api
+import roll_ops
 import run_batch
 import score_check
 import ui
@@ -59,6 +65,16 @@ ERRORS = (ValueError, KeyError, OSError, ET.ParseError, subprocess.SubprocessErr
 READ = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False)
+PLAYER_URI = "ui://yamba-music/midi-player.html"
+APP_MIME = "text/html;profile=mcp-app"  # an MCP Apps view (ext-apps spec 2026-01-26)
+PLAYER_TEMPLATE = Path(__file__).with_name("midi_player.html")
+PLAYER_META = "yamba-music/midi"  # in play_midi's result _meta: hosts hand it to the player, not to the model
+FONT_DOMAINS = ["https://fonts.googleapis.com", "https://fonts.gstatic.com"]
+ROLL_URI = "ui://yamba-music/piano-roll.html"
+ROLL_META = "yamba-music/roll"  # in create/open_piano_roll's result _meta: the roll, for the editor widget
+APP_ONLY = {"ui": {"visibility": ["app"]}, "openai/widgetAccessible": True, "openai/visibility": "private"}
+ROLL_WIDGET = {"ui": {"resourceUri": ROLL_URI}, "openai/outputTemplate": ROLL_URI, "openai/widgetAccessible": True}
+PAGE_PORT = 8791  # the editor page over stdio, served from this process
 
 Kind = Annotated[Literal["result", "score"], Field(description="'result' (one transcribed/imported piece) or "
                                                                "'score' (a full score combined from results)")]
@@ -84,6 +100,23 @@ Results and links:
 - Paths in results are on the user's Mac.
 - When a result has a 'url', give it to the user to download the file.
 - open_in_musescore opens MuseScore Studio on the user's Mac. What they save there comes back automatically.
+- play_midi plays a result or full score in a player shown in the chat, where the app can show it. Otherwise
+  give the user the player's url, or its absolute_path to open on their Mac.
+
+Piano rolls (editable scores, rolls/<name>.roll.json plus a MIDI file). When the user asks for "the piano roll",
+to edit or to write music, they mean these tools, not play_midi (which only plays):
+- create_piano_roll starts one from scratch or from a result, full score or MIDI file; open_piano_roll shows the
+  editor (in the chat where the app can, and always as a page link to give the user).
+- Read one with get_piano_roll. Notes are written as streams: D4:8 F4+A4:4 r:8 (pitch:duration; durations
+  1 2 4 8 16 32 64 128, '.' dotted, '~' tied as in 4~16), with @3:2 moving to a position (a second voice) and
+  | checking a barline. Positions are measure:beat (3:2, 3:2.5, 3:2+16); a beat is the time signature's
+  denominator (an eighth in 6/8).
+- Edit with the single tools (add_notes, change_notes, delete_notes, transpose_notes, mirror_notes,
+  retrograde_notes, scale_time) or, for several steps, edit_piano_roll with a list of operations: it applies
+  them all or none, and returns a preview to check. A wrong selection is an error that says what is there.
+- Edits land on the roll's min grid (set_grid min=32 for finer). revert_piano_roll undoes edits.
+- piano_roll_to_result turns a roll into a MusicXML result, which arrange_full_score / combine_score can then
+  concatenate with other results (same number of parts and staves). Only notes carry over.
 
 Rename or delete only when the user asks. Report failed transcriptions as they are; don't hide them.
 """
@@ -164,6 +197,17 @@ def measure_range(spec: str | None, count: int) -> range:
     return range(lo - 1, min(hi, count))
 
 
+def work_title(root: ET.Element) -> str:
+    return root.findtext("work/work-title") or root.findtext("movement-title") or ""
+
+
+def player_html(data: dict | None) -> str:
+    """The MIDI player page. With data (the MIDI and its title) it plays on its own; with None it waits for a
+    host to hand it a play_midi result (the MCP Apps widget)."""
+    slot = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c")  # can't close the <script> it sits in
+    return PLAYER_TEMPLATE.read_text(encoding="utf-8").replace("{{MIDI_DATA}}", slot)
+
+
 def music_summary(xml: Path, measures: str | None) -> dict:
     root = ET.parse(xml).getroot()
     score = score_check.read_musicxml(xml)
@@ -176,7 +220,7 @@ def music_summary(xml: Path, measures: str | None) -> dict:
             last = m.time
     shown = measure_range(measures, len(score.measures))
     return {
-        "title": root.findtext("work/work-title") or root.findtext("movement-title") or "",
+        "title": work_title(root),
         "parts": [p.findtext("part-name") or p.get("id") for p in root.findall("part-list/score-part")],
         "key_fifths": next((int(k) for k in (el.text for el in root.iter("fifths")) if k), None),
         "measures": len(score.measures),
@@ -197,11 +241,49 @@ def music_summary(xml: Path, measures: str | None) -> dict:
     }
 
 
+_page_server: str | None = None
+_page_lock = threading.Lock()
+
+
+def page_server() -> str:
+    """The base URL of a server for the editor page when there is no HTTP transport (stdio): YAMBA_UI_URL
+    (a ui.py the user runs), or ui.py's handler started in this process on 127.0.0.1."""
+    global _page_server
+    if os.environ.get("YAMBA_UI_URL"):
+        return os.environ["YAMBA_UI_URL"].rstrip("/")
+    with _page_lock:
+        if _page_server is None:
+            from http.server import ThreadingHTTPServer  # noqa: PLC0415 - only needed over stdio
+            try:
+                httpd = ThreadingHTTPServer(("127.0.0.1", PAGE_PORT), ui.Handler)
+            except OSError:  # taken: any free port
+                httpd = ThreadingHTTPServer(("127.0.0.1", 0), ui.Handler)
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            _page_server = f"http://127.0.0.1:{httpd.server_address[1]}"
+    return _page_server
+
+
+Measures = Annotated[str | None, Field(description="measures, e.g. '5' or '5-6'")]
+Parts = Annotated[list[str] | None, Field(description="part ids or names, e.g. ['rh']; all parts when left out")]
+Start = Annotated[str | None, Field(description="from this position, e.g. '3:2'")]
+End = Annotated[str | None, Field(description="up to (not including) this position")]
+At = Annotated[str | None, Field(description="only notes starting exactly here, e.g. '3:2'")]
+Pitches = Annotated[str | list[str] | None, Field(description="only these pitches: 'E4', 'C4-G5' or ['E4', 'G4']")]
+Ids = Annotated[list[str] | None, Field(description="only these note ids (from get_piano_roll include_ids)")]
+RollName = Annotated[str, Field(description="the piano roll's name")]
+
+
+def selection(measures=None, parts=None, start=None, end=None, at=None, pitches=None, ids=None) -> dict:
+    return {k: v for k, v in (("measures", measures), ("parts", parts), ("start", start), ("end", end),
+                              ("at", at), ("pitches", pitches), ("ids", ids)) if v is not None}
+
+
 def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer:
     server = MCPServer(SERVER_NAME, title="Yamba Music", version="0.1.0", instructions=INSTRUCTIONS)
     jobs = Jobs()
     prefix = f"/{token}" if token else ""
     base = public_url.rstrip("/") + prefix if public_url else None
+    public_hosts = (urlparse(public_url).netloc,) if public_url else ()
 
     def file_ref(rel: str) -> dict:
         """A file in the project, as its path (on the user's Mac) and, over HTTP, a download link."""
@@ -210,7 +292,7 @@ def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer
             ref["url"] = f"{base}/files/{quote(rel)}"
         return ref
 
-    def tool(annotations: ToolAnnotations):
+    def tool(annotations: ToolAnnotations, meta: dict[str, Any] | None = None):
         """Register a tool. Expected failures (a bad name, a missing file, MuseScore refusing) come back as
         tool errors the model can read and act on, not as an opaque crash."""
         def register(fn):
@@ -222,7 +304,7 @@ def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer
                     raise
                 except ERRORS as e:
                     raise ToolError(f"missing {e}" if isinstance(e, KeyError) else str(e)) from e
-            server.tool(annotations=annotations)(wrapper)
+            server.tool(annotations=annotations, meta=meta)(wrapper)
             return fn
         return register
 
@@ -269,6 +351,8 @@ def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer
             "scores": [{"name": s["name"], "sources": s["sources"], "has_pdf": bool(s["pdf"]),
                         "has_musescore_file": s["mscz"]} for s in ui.read_scores()],
             "exports": sorted(p.name for p in exports.iterdir() if p.is_file()) if exports.is_dir() else [],
+            "piano_rolls": [{k: r.get(k) for k in ("name", "title", "measures", "parts", "revision", "results")}
+                            for r in roll_api.list_rolls()],
             "tools": {"homr": Path(run_batch.homr_bin()).exists() or bool(shutil.which("homr")),
                       "musescore": bool(ui.mscore_bin()), "pdftoppm": bool(shutil.which("pdftoppm"))},
             "running_job": jobs.running(),
@@ -343,11 +427,7 @@ def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer
     ) -> dict[str, Any]:
         """Add MusicXML as a new result straight away, with no HOMR: a score you wrote, corrected or found.
         MuseScore checks that it opens."""
-        filename = name if Path(name).suffix.lower() in run_batch.MUSICXML_EXTS else f"{name}.musicxml"
-        taken = {r["output_name"] for r in ui.read_results()} | {nfc(Path(n).stem) for n in ui.list_inputs()}
-        if not replace and nfc(Path(filename).stem) in taken:
-            raise ValueError(f"{Path(filename).stem} already exists; pick another name or pass replace=true")
-        row = ui.import_upload(filename, musicxml.encode("utf-8"))
+        row = ui.import_result(name, musicxml.encode("utf-8"), replace)
         return {"result": nfc(row["output_name"]), "opens_in_musescore": row["musescore"],
                 "file": file_ref(row["output"])}
 
@@ -538,7 +618,314 @@ def build_server(*, token: str = "", public_url: str | None = None) -> MCPServer
         """Bring back what the user saved in MuseScore Studio since the last sync. Returns the names updated."""
         return {"synced": ui.sync()}
 
+    # --- playing ---------------------------------------------------------------------------------------------
+    @server.resource(PLAYER_URI, name="midi_player", title="MIDI player", mime_type=APP_MIME,
+                     description="The MIDI player play_midi shows in the chat",
+                     meta={"ui": {"csp": {"resourceDomains": FONT_DOMAINS}, "prefersBorder": False}})
+    def midi_player() -> str:
+        return player_html(None)
+
+    @tool(WRITE, meta={"ui": {"resourceUri": PLAYER_URI}, "openai/outputTemplate": PLAYER_URI})
+    def play_midi(
+        kind: Kind,
+        name: Annotated[str, Field(description="the result or full score name")],
+    ) -> CallToolResult:
+        """Play a result or full score: shows a MIDI player in the chat (a read-only scrubber with play/pause,
+        loop, speed, volume) where the app can, and returns a link to the same player as a page. Exports the MIDI
+        with MuseScore first when there is none yet or the music changed since. It can't edit: to show the
+        piano-roll editor, or to write or change notes, use create_piano_roll / open_piano_roll."""
+        find(kind, name)
+        ui.sync()
+        xml = ui.source_xml(kind, name)
+        exports = ui.ROOT / "exports"
+        mid = exports / f"{xml.stem}.mid"
+        exported = not mid.is_file() or mid.stat().st_mtime < xml.stat().st_mtime
+        if exported:
+            mid = ui.export(xml, "midi", exports)
+        title = work_title(ET.parse(xml).getroot()) or nfc(name)
+        midi = file_ref(str(mid.relative_to(ui.ROOT)))
+        data = {"title": title, "name": nfc(name), "kind": kind, "file": mid.name,
+                "base64": base64.b64encode(mid.read_bytes()).decode("ascii"), "download_url": midi.get("url")}
+        page = exports / f"{xml.stem}.player.html"
+        page.write_text(player_html(data), encoding="utf-8")
+        player = file_ref(str(page.relative_to(ui.ROOT)))
+        where = player.get("url", player["absolute_path"])
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"MIDI player for {kind} {nfc(name)!r}: {where}")],
+            structured_content={"kind": kind, "name": nfc(name), "title": title, "exported": exported,
+                                "midi": midi, "player": player},
+            meta={PLAYER_META: data})
+
+    # --- piano rolls -----------------------------------------------------------------------------------------
+    def page_url(name: str) -> str:
+        return f"{base or page_server()}/roll?name={quote(nfc(name))}"
+
+    def roll_view(name: str, doc: dict, text: str, extra: dict | None = None) -> CallToolResult:
+        """The roll for the editor widget (in _meta) and a summary plus the page link for the model."""
+        url = page_url(name)
+        out = {**roll_api.describe(nfc(name), doc), "editor_url": url, **(extra or {})}
+        out["files"] = {k: file_ref(v) for k, v in out["files"].items()}
+        return CallToolResult(content=[TextContent(type="text", text=f"{text} Editor: {url}")],
+                              structured_content=out,
+                              meta={ROLL_META: {"name": nfc(name), "roll": doc, "page_url": url}})
+
+    def edit(name: str, *ops: dict) -> dict[str, Any]:
+        return roll_api.edit(name, list(ops))
+
+    @server.resource(ROLL_URI, name="piano_roll", title="Piano roll editor", mime_type=APP_MIME,
+                     description="The piano-roll editor create_piano_roll and open_piano_roll show in the chat",
+                     meta={"ui": {"csp": {"resourceDomains": FONT_DOMAINS}, "prefersBorder": False}})
+    def piano_roll_widget() -> str:
+        return roll_api.page_html(None)
+
+    @tool(WRITE, meta=ROLL_WIDGET)
+    def create_piano_roll(
+        name: Annotated[str, Field(description="the new roll's name (letters, digits, spaces, '.', '-', '_')")],
+        source: Annotated[Literal["new", "result", "score", "midi"], Field(
+            description="new (an empty score), or read from a result, a full score, or a MIDI file")] = "new",
+        source_name: Annotated[str | None, Field(description="the result or full score to read")] = None,
+        midi_base64: Annotated[str | None, Field(description="for source=midi: the file, base64-encoded")] = None,
+        midi_path: Annotated[str | None, Field(description="for source=midi: a .mid in the project, e.g. "
+                                                           "exports/waltz.mid")] = None,
+        title: Annotated[str | None, Field(description="the score's title (default: the name)")] = None,
+        time_signature: Annotated[str, Field(description="for new: e.g. 4/4, 3/4, 6/8")] = "4/4",
+        key: Annotated[str, Field(description="for new: e.g. 'C major', 'D dorian', 'F# minor'")] = "C major",
+        tempo: Annotated[float, Field(description="for new: quarter notes per minute")] = 120,
+        measures: Annotated[int, Field(description="for new: how many measures")] = 4,
+        preset: Annotated[Literal["piano", "single"], Field(
+            description="for new: piano (right and left hand, one instrument) or a single melody part")] = "piano",
+        grid_min: Annotated[str | None, Field(description="finest step: 16, 32, 64 ... (default 16)")] = None,
+        grid_default: Annotated[str | None, Field(description="a click's note length in the editor (default 8)")] = None,
+        grid_max: Annotated[str | None, Field(description="longest note a drag makes (default 4)")] = None,
+        split: Annotated[str | None, Field(description="for source=midi: split a one-track piano at this pitch, "
+                                                       "e.g. C4, into right and left hand")] = None,
+        replace: Annotated[bool, Field(description="overwrite a roll of the same name")] = False,
+    ) -> CallToolResult:
+        """Make a piano roll (an editable score): empty, or read from a result, full score or MIDI file. Shows
+        the editor in the chat where the app can, and returns its page link. Reading a score keeps the notes
+        only (no dynamics, slurs, lyrics, grace notes; tuplets are snapped to the grid and counted)."""
+        grid = {k: v for k, v in (("min", grid_min), ("default", grid_default), ("max", grid_max)) if v}
+        midi = None
+        if source == "midi":
+            midi, found = roll_api.read_midi_source(base64_data=midi_base64, path=midi_path)
+            source_name = source_name or found
+        doc, info = roll_api.create(name, source, source_name=source_name, midi=midi, title=title,
+                                    time_signature=time_signature, key=key, tempo=tempo, measures=measures,
+                                    preset=preset, grid=grid or None, split=split, replace=replace)
+        return roll_view(name, doc, f"Made the piano roll {nfc(name)!r}.", {"import": info} if info else None)
+
+    @tool(READ, meta=ROLL_WIDGET)
+    def open_piano_roll(name: RollName) -> CallToolResult:
+        """Show the piano-roll editor for a roll: in the chat where the app can, and as a page link to give the
+        user (it works in any browser on this Mac). In the editor you click notes in, drag them longer or
+        shorter, select and mirror, retrograde or stretch, play, and save. To edit a result or full score, first
+        make its roll with create_piano_roll(source='result' or 'score')."""
+        return roll_view(name, roll_api.load(name), f"Piano roll {nfc(name)!r}.")
+
+    @tool(READ)
+    def get_piano_roll(
+        name: RollName,
+        measures: Annotated[str | None, Field(description="'5', '3-8' or 'all'; the first 8 when left out")] = None,
+        parts: Parts = None,
+        include_ids: Annotated[bool, Field(description="also list each note with its id and position")] = False,
+    ) -> dict[str, Any]:
+        """Read a piano roll: its parts, time, key, tempo and grid, and the notes of the chosen measures as one
+        stream per part (D4:8 F4+A4:4 r:8; @2 starts a further voice at beat 2). A stream can be passed back to
+        add_notes as it is. A note is listed in the measure where it starts, with its whole length."""
+        doc = roll_api.load(name)
+        shown = measure_range(measures, doc["measures"])
+        out = {"name": nfc(name), **roll.summary(doc), "shown": f"{shown.start + 1}-{shown.stop}" if shown else "none",
+               "bars": roll.streams(doc, [m + 1 for m in shown], parts),
+               "token_format": "pitch:duration; durations 1 2 4 8 16 32 64 128, '.' dotted, '~' tied; C4+E4 a chord; "
+                               "r a rest; @beat (or @measure:beat) moves to a position in the measure, starting a "
+                               "further voice"}
+        if include_ids:
+            tm = roll.TimeMap(doc)
+            lo, hi = tm.start(shown.start + 1), tm.start(shown.stop + 1)
+            out["notes"] = [{"id": n["id"], "part": n["part"], "pitch": roll.label(doc, n, tm).split(" at ")[0],
+                             "at": tm.format(n["start"]), "dur": roll.format_duration(n["dur"]), "vel": n["vel"]}
+                            for n in doc["notes"] if lo <= n["start"] < hi]
+        return out
+
+    @tool(WRITE)
+    def edit_piano_roll(
+        name: RollName,
+        operations: Annotated[list[dict[str, Any]], Field(
+            description="operations applied in order, all or none, e.g. [{\"op\": \"add\", \"part\": \"rh\", "
+                        "\"at\": \"1:1\", \"notes\": \"D4:8 F4:8 A4:4\"}, {\"op\": \"mirror\", \"select\": "
+                        "{\"measures\": \"1\"}, \"kind\": \"diatonic\", \"center\": \"A4\"}]",
+            json_schema_extra={"items": roll_ops.ops_schema()})],
+        base_revision: Annotated[int | None, Field(description="refuse if the roll is no longer at this revision")] = None,
+        dry_run: Annotated[bool, Field(description="only show what would change; save nothing")] = False,
+    ) -> dict[str, Any]:
+        """Apply a sequence of edits to a piano roll in one go: add, change, move, copy, delete notes; transpose,
+        mirror (chromatic or diatonic), retrograde, retrograde_inversion, scale_time; measures, time, key,
+        tempo, grid, title and parts. If one fails nothing is saved and the error names it. Returns the
+        changed measures as streams, to check."""
+        return roll_api.edit(name, operations, base_revision, dry_run)
+
+    @tool(WRITE)
+    def add_notes(
+        name: RollName,
+        part: Annotated[str, Field(description="part id or name, e.g. 'rh'")],
+        notes: Annotated[str, Field(description="a stream: D4:8 F4+A4:4 r:8 (| checks a barline, @2 moves to beat 2)")],
+        at: Annotated[str, Field(description="where the stream starts, e.g. '3:1'")] = "1:1",
+        vel: Annotated[int | None, Field(description="velocity 1-127 (default 80)")] = None,
+    ) -> dict[str, Any]:
+        """Add notes, chords and rests to a part of a piano roll, one after another from a position. The score
+        grows if they run past its end."""
+        return edit(name, {"op": "add", "part": part, "at": at, "notes": notes, **({"vel": vel} if vel else {})})
+
+    @tool(WRITE)
+    def delete_notes(name: RollName, measures: Measures = None, parts: Parts = None, start: Start = None,
+                     end: End = None, at: At = None, pitches: Pitches = None, ids: Ids = None) -> dict[str, Any]:
+        """Delete the notes (and rest markers) a selection picks; with no selection, all of them."""
+        return edit(name, {"op": "delete", "select": selection(measures, parts, start, end, at, pitches, ids)})
+
+    @tool(WRITE)
+    def change_notes(
+        name: RollName,
+        pitch: Annotated[str | None, Field(description="the new pitch, e.g. F#4 (for one note)")] = None,
+        dur: Annotated[str | None, Field(description="the new duration, e.g. 4 or 8.")] = None,
+        vel: Annotated[int | None, Field(description="the new velocity 1-127")] = None,
+        measures: Measures = None, parts: Parts = None, start: Start = None, end: End = None, at: At = None,
+        pitches: Pitches = None, ids: Ids = None,
+    ) -> dict[str, Any]:
+        """Change the pitch, duration or velocity of the selected notes, e.g. at='3:2', pitches='E4', pitch='F4'
+        to make the E4 on beat 2 of measure 3 an F4."""
+        op = {"op": "change", "select": selection(measures, parts, start, end, at, pitches, ids)}
+        return edit(name, {**op, **{k: v for k, v in (("pitch", pitch), ("dur", dur), ("vel", vel)) if v is not None}})
+
+    @tool(WRITE)
+    def transpose_notes(
+        name: RollName,
+        semitones: Annotated[int | None, Field(description="chromatic: up (+) or down (-) this many semitones")] = None,
+        steps: Annotated[int | None, Field(description="diatonic: up or down this many scale steps")] = None,
+        key: Annotated[str | None, Field(description="for steps: the scale, e.g. 'D dorian' (default: the score's key)")] = None,
+        measures: Measures = None, parts: Parts = None, start: Start = None, end: End = None, at: At = None,
+        pitches: Pitches = None, ids: Ids = None,
+    ) -> dict[str, Any]:
+        """Transpose the selected notes (all when nothing is selected) by semitones, or by scale steps in a key."""
+        op = {"op": "transpose", "select": selection(measures, parts, start, end, at, pitches, ids)}
+        return edit(name, {**op, **{k: v for k, v in (("semitones", semitones), ("steps", steps), ("key", key))
+                                    if v is not None}})
+
+    @tool(WRITE)
+    def mirror_notes(
+        name: RollName,
+        center: Annotated[str | list[str], Field(description="the axis: a note such as 'D4', or two notes to swap")],
+        kind: Annotated[Literal["chromatic", "diatonic"], Field(
+            description="chromatic: 5 semitones above the center goes 5 below; diatonic: scale steps in a key")] = "chromatic",
+        key: Annotated[str | None, Field(description="for diatonic: tonic and mode, e.g. 'D dorian', 'E phrygian', "
+                                                     "'F lydian' (default: the score's key)")] = None,
+        measures: Measures = None, parts: Parts = None, start: Start = None, end: End = None, at: At = None,
+        pitches: Pitches = None, ids: Ids = None,
+    ) -> dict[str, Any]:
+        """Mirror (invert) the selected notes, or the whole score, about a center note: chromatically, or
+        diatonically in a scale (the center must be in it; notes off the scale keep their accidental, inverted)."""
+        op = {"op": "mirror", "select": selection(measures, parts, start, end, at, pitches, ids), "center": center,
+              "kind": kind}
+        return edit(name, {**op, **({"key": key} if key else {})})
+
+    @tool(WRITE)
+    def retrograde_notes(
+        name: RollName,
+        invert: Annotated[bool, Field(description="also mirror (retrograde inversion); then give center")] = False,
+        center: Annotated[str | list[str] | None, Field(description="for invert: the mirror's center, e.g. 'D4'")] = None,
+        kind: Annotated[Literal["chromatic", "diatonic"], Field(description="for invert")] = "chromatic",
+        key: Annotated[str | None, Field(description="for invert, diatonic: e.g. 'D dorian'")] = None,
+        measures: Measures = None, parts: Parts = None, start: Start = None, end: End = None, at: At = None,
+        pitches: Pitches = None, ids: Ids = None,
+    ) -> dict[str, Any]:
+        """Reverse the selected notes in time within their span (the chosen measures or range), or the whole
+        score. With invert, mirror them too (a retrograde inversion)."""
+        sel = selection(measures, parts, start, end, at, pitches, ids)
+        if not invert:
+            return edit(name, {"op": "retrograde", "select": sel})
+        op = {"op": "retrograde_inversion", "select": sel, "center": center, "kind": kind}
+        return edit(name, {**op, **({"key": key} if key else {})})
+
+    @tool(WRITE)
+    def scale_time(
+        name: RollName,
+        factor: Annotated[str, Field(description="'2' twice as long, '1/2' twice as fast, also '3/2', '4', '1/4'")],
+        ripple: Annotated[bool, Field(description="move the later music of the same parts along (default)")] = True,
+        measures: Measures = None, parts: Parts = None, start: Start = None, end: End = None, at: At = None,
+        pitches: Pitches = None, ids: Ids = None,
+    ) -> dict[str, Any]:
+        """Multiply the durations and spacing of the selected notes (or the whole score) by a factor, from the
+        start of the selection. Later music in the same parts moves along and the score grows when needed. The
+        result must stay on the min grid."""
+        sel = selection(measures, parts, start, end, at, pitches, ids)
+        return edit(name, {"op": "scale_time", "select": sel, "factor": factor, "ripple": ripple})
+
+    @tool(WRITE)
+    def piano_roll_to_result(
+        name: RollName,
+        result: Annotated[str | None, Field(description="the result's name (default: the roll's, or <name>-roll "
+                                                        "if that is taken)")] = None,
+        replace: Annotated[bool, Field(description="overwrite a result of that name")] = False,
+    ) -> dict[str, Any]:
+        """Write a piano roll as MusicXML and add it to the results, so it can be concatenated into a full
+        score with arrange_full_score and combine_score. Warns when its parts and staves don't match the other
+        results'."""
+        out = roll_api.to_result(name, result, replace)
+        out["musicxml"] = file_ref(out["musicxml"])
+        return out
+
+    @tool(WRITE)
+    def revert_piano_roll(
+        name: RollName,
+        revision: Annotated[int, Field(description="the revision to go back to (each save adds one)")],
+    ) -> dict[str, Any]:
+        """Undo edits: make an earlier revision of a piano roll the current one (as a new revision, so this can be
+        undone too). The last 20 revisions are kept."""
+        return roll_api.revert(name, revision)
+
+    # for the editor widget: hosts let the widget call these; they are hidden from the model where hosts can
+    @tool(READ, meta=APP_ONLY)
+    def load_piano_roll(
+        name: RollName,
+        if_newer_than: Annotated[int | None, Field(description="return only if past this revision")] = None,
+    ) -> dict[str, Any]:
+        """For the piano-roll editor: the whole roll document, to reload it."""
+        doc = roll_api.load(name)
+        if if_newer_than is not None and doc["revision"] <= if_newer_than:
+            return {"name": nfc(name), "unchanged": True, "revision": doc["revision"]}
+        return {"name": nfc(name), "roll": doc}
+
+    @tool(READ, meta=APP_ONLY)
+    def transform_roll(
+        roll: Annotated[dict[str, Any], Field(description="a roll document")],  # noqa: F811 - the editor's name for it
+        operations: Annotated[list[dict[str, Any]], Field(description="edit_piano_roll's operations")],
+    ) -> dict[str, Any]:
+        """For the piano-roll editor: apply operations to the roll being edited and return it; saves nothing."""
+        return roll_api.transform(roll, operations)
+
+    @tool(WRITE, meta=APP_ONLY)
+    def save_piano_roll(
+        name: RollName,
+        roll: Annotated[dict[str, Any], Field(description="the roll document")],  # noqa: F811
+        base_revision: Annotated[int | None, Field(description="refuse if the saved roll moved past this")] = None,
+        new: Annotated[bool, Field(description="a new roll: refuse an existing name unless replace")] = False,
+        replace: bool = False,
+    ) -> dict[str, Any]:
+        """For the piano-roll editor: save the roll and its MIDI."""
+        doc, warnings = roll_api.save(name, roll, base_revision, new=new, replace=replace)
+        return {"name": nfc(name), "roll": doc, "revision": doc["revision"], "warnings": warnings}
+
     # --- HTTP only -------------------------------------------------------------------------------------------
+    async def roll_http(request):
+        path = request.url.path.removeprefix(prefix)
+        query = {k: request.query_params.getlist(k) for k in request.query_params}
+        body = await request.body()
+        code, ctype, data = await run_in_threadpool(roll_api.handle, request.method, path, query,
+                                                    dict(request.headers), body, public_hosts)
+        return Response(data, status_code=code, media_type=ctype)
+
+    server.custom_route(f"{prefix}/roll", methods=["GET"])(roll_http)
+    server.custom_route(f"{prefix}/api/roll/{{action}}", methods=["GET", "POST"])(roll_http)
+
     @server.custom_route(f"{prefix}/files/{{path:path}}", methods=["GET"])
     async def files(request):
         """Exports, scores, results and renders, for the links tools return; the same folders as the UI serves."""
@@ -581,7 +968,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     token = os.environ.get("YAMBA_MCP_TOKEN", "").strip("/")
-    server = build_server(token=token, public_url=os.environ.get("YAMBA_MCP_PUBLIC_URL") or None)
+    local = f"http://127.0.0.1:{args.port}" if args.transport == "streamable-http" else None
+    server = build_server(token=token, public_url=os.environ.get("YAMBA_MCP_PUBLIC_URL") or local)
     if args.list_tools:
         for t in asyncio.run(server.list_tools()):
             print(f"{t.name}: {(t.description or '').strip().splitlines()[0]}")
